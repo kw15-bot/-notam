@@ -1,0 +1,41 @@
+name: NOTAM CN Collect
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: notam-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run collector
+        env:
+          NMS_CLIENT_ID: ${{ secrets.NMS_CLIENT_ID }}
+          NMS_CLIENT_SECRET: ${{ secrets.NMS_CLIENT_SECRET }}
+          NMS_ENV: ${{ vars.NMS_ENV || 'prod' }}
+        run: python notam_cn_collect.py --out-dir ./notam_out
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add notam_out/
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(notam): update NOTAM CN data [skip ci]"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            echo "Push attempt $i failed, retrying..."
+            sleep $((i * 3))
+          done
