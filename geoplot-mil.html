@@ -3162,12 +3162,16 @@ function notamPopupHtml(f){
   // の parse_boundary_waypoints() 参照)。表示している点は境界の一部にすぎないので、その旨を明示する。
   const wpNote = (p.unresolved_waypoints && p.unresolved_waypoints.length)
     ? `<div class="pop-mono" style="color:var(--amber);">境界に未解決の地点あり（${esc(p.unresolved_waypoints.join(', '))}）。表示位置は境界の一部のみ</div>` : '';
+  // 航空路区間の閉鎖(線分)+地名点中心の円、というエリアの多角形とは違う図形の注記
+  // (notam_cn_collect.py の parse_route_segments_and_circle() 参照)。
+  const routeNote = (p.geometry_source === 'text-route-segments')
+    ? `<div class="pop-mono" style="color:var(--cyan);">図形は航空路区間の閉鎖(線分)${(p.unresolved_waypoints && p.unresolved_waypoints.length) ? '' : '・関連区域'}</div>` : '';
   const rawText = p.raw_text ? `<div class="pop-mono" style="white-space:pre-wrap;max-height:160px;overflow-y:auto;margin-top:6px;">${esc(p.raw_text)}</div>` : '';
   const kwHtml = (p.matched_keywords && p.matched_keywords.length)
     ? `<span class="notam-tag flag">語句一致: ${esc(p.matched_keywords.join(', '))}</span>` : '';
   return `<div class="pop-title">${esc(p.title || p.number || 'NOTAM')}</div>`
     + `<div class="pop-mono">${esc(label)} / ${esc(p.icao_location||'')} / ${esc(p.q_code||'')}</div>`
-    + `<div class="notam-tag ${esc(p.focus_tag||'admin')}">${esc(tag)}</div>${kwHtml}${period}${srcNote}${wpNote}${rawText}`;
+    + `<div class="notam-tag ${esc(p.focus_tag||'admin')}">${esc(tag)}</div>${kwHtml}${period}${srcNote}${wpNote}${routeNote}${rawText}`;
 }
 
 // タブ(Active/Upcoming/Archive/All)ごとの一覧対象。Active/Upcomingは接続中URLのfeaturesの
