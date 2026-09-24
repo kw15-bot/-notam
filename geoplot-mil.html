@@ -594,6 +594,9 @@ body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
             <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="leisure">レジャー/民間</label>
             <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="plaintext">未分類(平文)</label>
             <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="admin">施設事務連絡</label>
+            <div class="flabel">語句一致(keyword_hit)</div>
+            <label class="check-row"><input type="checkbox" id="chkNotamKeywordOnly" checked>語句に合致するものだけ表示</label>
+            <div style="font-size:9.5px;color:var(--text-faint);margin-top:2px;">DANGER / TEMPORARY / CLSD / FORBIDDEN / PROHIBITED / DNG / CLOSED（本文への部分一致。地域・分類の絞り込みと併用されます）</div>
           </div>
         </div>
         <div id="notamList"></div>
@@ -764,7 +767,11 @@ body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
 // 常にヘッダーから開け、地図上のNOTAM図形も表示され続ける。図形はGeoJSONそのままを
 // L.geoJSONで描画(MSA側のような独自座標パースは不要、サーバー側で完成済みのため)。
 // Q項からの推定図形(geometry_source: qline-circle/qline-point)は破線で区別。
-const APP_VERSION = 'v1.9.0';
+// v1.9.1: NOTAMに keyword_hit/matched_keywords による語句絞り込みを追加(notam_cn_collect.py
+// のkeyword_hits()、ユーザー提供の語句リスト: DANGER/TEMPORARY/CLSD/FORBIDDEN/PROHIBITED/
+// DNG/CLOSED、本文への大文字小文字を区別しない部分一致)。area_group/focus_tagの絞り込みを
+// 置き換えるのではなく、その上に重ねるAND条件(既定ON=語句に合致するものだけ表示)。
+const APP_VERSION = 'v1.9.1';
 
 // Small folded-corner "PDF" document glyph used on every PDF-export entry point
 // (results card, auto-mode popup, manual-mode popup). Kept as one constant so the
@@ -3075,6 +3082,9 @@ let notamActiveFeatures = [];             // 接続中URL(notam_cn.geojson)の f
 let notamArchiveFeatures = new Map();     // 'YYYY-MM' -> features[]。読み込んだArchive月ぶんだけ蓄積される
 let notamAreaFilter = new Set(['CN','HK','MO','TW']);
 let notamFocusFilter = new Set(['restriction','flag','watch']); // leisure/admin/plaintextは既定OFF(HANDOFF_NOTAM.md参照)
+// keyword_hit(本文語句一致)による絞り込み。既定ON=語句に合致するものだけ表示。
+// area_group/focus_tagの絞り込みを置き換えるものではなく、その上に重ねるAND条件(notamPassesFilter参照)。
+let notamKeywordOnly = true;
 let notamTab = 'active';
 let notamLayerVisibleOnMap = true;
 let notamArchiveOnMap = false;            // Archiveは既定では地図に出さない(件数が多く、蓄積されるほど肥大するため)
@@ -3098,7 +3108,10 @@ function guessNotamUrl(geojsonUrl){
 function notamStatusOf(f){ return (f.properties && f.properties.status) || 'active'; }
 function notamPassesFilter(f){
   const p = f.properties || {};
-  return notamAreaFilter.has(p.area_group) && notamFocusFilter.has(p.focus_tag || 'admin');
+  if (!notamAreaFilter.has(p.area_group)) return false;
+  if (!notamFocusFilter.has(p.focus_tag || 'admin')) return false;
+  if (notamKeywordOnly && !p.keyword_hit) return false;
+  return true;
 }
 function notamStyle(f){
   const p = f.properties || {};
@@ -3124,9 +3137,11 @@ function notamPopupHtml(f){
   const srcNote = (p.geometry_source || '').startsWith('qline')
     ? `<div class="pop-mono" style="color:var(--amber);">図形はQ項からの推定（${esc(p.geometry_source)}${p.qline_offset_nm ? `・中心ずれ約${Math.round(p.qline_offset_nm)}NM` : ''}）</div>` : '';
   const rawText = p.raw_text ? `<div class="pop-mono" style="white-space:pre-wrap;max-height:160px;overflow-y:auto;margin-top:6px;">${esc(p.raw_text)}</div>` : '';
+  const kwHtml = (p.matched_keywords && p.matched_keywords.length)
+    ? `<span class="notam-tag flag">語句一致: ${esc(p.matched_keywords.join(', '))}</span>` : '';
   return `<div class="pop-title">${esc(p.title || p.number || 'NOTAM')}</div>`
     + `<div class="pop-mono">${esc(label)} / ${esc(p.icao_location||'')} / ${esc(p.q_code||'')}</div>`
-    + `<div class="notam-tag ${esc(p.focus_tag||'admin')}">${esc(tag)}</div>${period}${srcNote}${rawText}`;
+    + `<div class="notam-tag ${esc(p.focus_tag||'admin')}">${esc(tag)}</div>${kwHtml}${period}${srcNote}${rawText}`;
 }
 
 // タブ(Active/Upcoming/Archive/All)ごとの一覧対象。Active/Upcomingは接続中URLのfeaturesの
@@ -3200,6 +3215,7 @@ function renderNotamList(){
       <div class="wmeta"><span>${esc(label)}</span><span>${esc(p.icao_location||'')}</span><span>${esc(p.q_code||'')}</span></div>
       <div class="wmeta"><span>${esc(period)}</span></div>
       <div class="notam-tag ${esc(tagKey)}">${esc(NOTAM_FOCUS_LABEL[tagKey] || tagKey)}</div>
+      ${(p.matched_keywords && p.matched_keywords.length) ? `<span class="notam-tag flag">語句一致: ${esc(p.matched_keywords.join(', '))}</span>` : ''}
       ${(p.geometry_source||'').startsWith('qline') ? `<span class="notam-tag qline">Q項推定図形</span>` : ''}`;
     if (f.geometry){
       div.addEventListener('click', ()=>{
@@ -3303,6 +3319,7 @@ $$('.notam-focus-chk').forEach(chk=>{
     renderNotamList();
   });
 });
+$('#chkNotamKeywordOnly').addEventListener('change', (e)=>{ notamKeywordOnly = e.target.checked; renderNotamList(); });
 $('#chkNotamLayerVisible').addEventListener('change', (e)=>{ notamLayerVisibleOnMap = e.target.checked; rebuildNotamMapLayer(); });
 $('#chkNotamArchiveOnMap').addEventListener('change', (e)=>{ notamArchiveOnMap = e.target.checked; rebuildNotamMapLayer(); });
 $('#btnConnectNotamUrl').addEventListener('click', ()=>{

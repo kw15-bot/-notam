@@ -180,6 +180,25 @@ def q_focus_tag(q):
     return "admin"
 
 
+# ----------------------------------------------------------------------------- 語句照合(keyword_hit)
+# focus_tag/q_focus_tag はQコードの主題(何についてのNOTAMか)による粗い絞り込み。
+# こちらは本文(raw_text)そのものに対する語句一致で、focus_tag/area_groupの絞り込みを
+# 置き換えるものではなく、その上に重ねる追加条件として使う(ビューア側もAND条件)。
+# 語句リストは別ルートで入手したもの(ユーザー提供、2026-09-24)。大文字小文字を区別しない
+# 部分一致(ユーザー合意済み)。
+# 注意: CLSD/CLOSED は誘導路・滑走路・駐機場閉鎖など空港運用の事務連絡(focus_tag=admin)にも
+# 非常に高い頻度でヒットする(実データでの内訳は§?参照)。keyword_hitだけを唯一の絞り込みに
+# せず、必ずarea_group/focus_tagの絞り込みと併用すること。
+KEYWORD_LIST = ["DANGER", "TEMPORARY", "CLSD", "FORBIDDEN", "PROHIBITED", "DNG", "CLOSED"]
+
+
+def keyword_hits(text):
+    """raw_text に対して KEYWORD_LIST を大文字小文字を区別せず部分一致で照合し、
+    ヒットした語句を(KEYWORD_LISTの順で)返す。1つもヒットしなければ空リスト。"""
+    t = (text or "").upper()
+    return [kw for kw in KEYWORD_LIST if kw in t]
+
+
 _REF = re.compile(r"(\S+/\d+)\s+NOTAM([NRC])(?:\s+(\S+/\d+))?")
 
 
@@ -411,6 +430,8 @@ def to_feature(rec, now):
     when = parse_dt(rec.get("issued"))
     place = ((rec.get("icao_location") or rec.get("fir") or "").split() or [""])[0]
     end = effective_end(rec)
+    raw_text = rec.get("icao_text") or rec.get("text")
+    hits = keyword_hits(raw_text)
     return {
         "type": "Feature",
         "geometry": rec.get("geometry"),
@@ -418,7 +439,7 @@ def to_feature(rec, now):
             "title": f"{AREA_LABEL.get(rec['area_group'], rec['area_group'])} {place} {rec.get('number')}",
             "date": when.strftime("%Y-%m-%d") if when else None,
             "issuer": rec.get("account_id"),
-            "raw_text": rec.get("icao_text") or rec.get("text"),
+            "raw_text": raw_text,
             "valid_start": iso(parse_dt(rec.get("effective_start"))),
             "valid_end": iso(end),
             "valid_raw": [rec["schedule"]] if rec.get("schedule") else [],
@@ -429,6 +450,7 @@ def to_feature(rec, now):
             "icao_location": rec.get("icao_location"), "fir": rec.get("fir"),
             "q_code": rec.get("q_code"), "category": q_category(rec.get("q_code")),
             "focus_tag": q_focus_tag(rec.get("q_code")),
+            "keyword_hit": bool(hits), "matched_keywords": hits,
             "lower": rec.get("lower"), "upper": rec.get("upper"),
             "radius_nm": rec.get("radius_nm"), "geometry_source": rec.get("geometry_source"),
             "qline_offset_nm": rec.get("qline_offset_nm"),
