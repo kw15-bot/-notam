@@ -10,6 +10,19 @@ name: NOTAM collect (CN/HK/MO/TW)
 #   Variables NMS_ENV (prod | staging | fit)  ※未設定なら prod
 on:
   workflow_dispatch:
+    inputs:
+      env:
+        description: "NMS-API environment override (空欄なら Repository Variable NMS_ENV / 未設定なら prod)"
+        required: false
+        default: ""
+        type: choice
+        options: ["", prod, staging, fit]
+      bootstrap:
+        description: "初回投入モード（空欄なら通常の差分収集）"
+        required: false
+        default: ""
+        type: choice
+        options: ["", il, locations]
 
 permissions:
   contents: write
@@ -31,11 +44,11 @@ jobs:
 
       - name: Collect NOTAMs
         env:
-          NMS_ENV: ${{ vars.NMS_ENV || 'prod' }}
+          NMS_ENV: ${{ inputs.env || vars.NMS_ENV || 'prod' }}
           NMS_CLIENT_ID: ${{ secrets.NMS_CLIENT_ID }}
           NMS_CLIENT_SECRET: ${{ secrets.NMS_CLIENT_SECRET }}
         # 取得失敗時は終了コード2でジョブが赤くなり、以降のコミットは行われない（last_successも進まない）
-        run: python notam_cn_collect.py --out-dir notam_out
+        run: python notam_cn_collect.py --out-dir notam_out ${{ inputs.bootstrap && format('--bootstrap {0}', inputs.bootstrap) || '' }}
 
       - name: Commit changes
         run: |
