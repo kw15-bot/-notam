@@ -1,0 +1,5 @@
+# 手元検証用の出力・調査結果はコミットしない
+notam_out_local/
+probe_out/
+__pycache__/
+*.pyc
