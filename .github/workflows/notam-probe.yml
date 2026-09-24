@@ -30,9 +30,6 @@ jobs:
           NMS_ENV: ${{ github.event.inputs.env }}
         run: python notam_cn_probe.py
 
-      - name: Preview cn_sample.json (debug, temporary)
-        run: python -c "import json; d=json.load(open('probe_out/cn_sample.json')); print(f'{len(d)} records'); print(json.dumps(d[:2], ensure_ascii=False, indent=2))"
-
       - name: Upload probe output
         uses: actions/upload-artifact@v4
         with:
