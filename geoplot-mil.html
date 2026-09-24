@@ -3317,12 +3317,12 @@ $('#btnLoadNotamArchive').addEventListener('click', ()=> loadNotamArchiveMonth($
 renderNotamList();
 
 // ?notam=<url> があればそれを、無ければ ?geojson=<url>(MSA側の自動接続)から
-// notam_out/notam_cn.geojson の位置を推測して自動接続する。推測できなければ何もせず、
-// ヘッダーの🛰パネルからの手動URL入力を待つ。
+// notam_out/notam_cn.geojson の位置を推測、それも無ければ本リポジトリのGitHub Pages上の
+// notam_cn.geojson (notam-collect.yml が10分おきに更新する) に既定で自動接続する。
+const DEFAULT_NOTAM_URL = 'https://kw15-bot.github.io/-notam/notam_out/notam_cn.geojson';
 (function autoStartNotamFromUrl(){
   const params = new URLSearchParams(location.search);
-  const notamUrl = params.get('notam') || guessNotamUrl(params.get('geojson'));
-  if (!notamUrl) return;
+  const notamUrl = params.get('notam') || guessNotamUrl(params.get('geojson')) || DEFAULT_NOTAM_URL;
   $('#notamUrlInput').value = notamUrl;
   connectNotamUrl(notamUrl);
 })();
