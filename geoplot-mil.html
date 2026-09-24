@@ -165,9 +165,19 @@ body{
 .notam-filters .flabel{color:var(--text-dim);font-weight:600;margin:8px 0 4px;}
 .notam-filters .flabel:first-child{margin-top:0;}
 .notam-filters label.check-row{display:inline-flex;margin:2px 10px 2px 0;font-size:11px;}
-.notam-item{border-bottom:1px solid var(--border);padding:10px 0;}
-.notam-item.clickable{cursor:pointer;transition:border-color .15s;}
-.notam-item.clickable:hover{background:var(--panel-alt);}
+/* 航行警報側(.warn-item)とカードの見た目を揃える(枠線・角丸・余白・背景)。
+   focus_tagごとの色分けは.notam-tagの配色を流用し、restriction/flag/watchは
+   .warn-item.milと同じ要領で枠線・タイトル色にも反映する(HANDOFF_NOTAM.md参照)。 */
+.notam-item{border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:8px;background:var(--panel-alt);}
+.notam-item.clickable{cursor:pointer;transition:border-color .15s,transform .1s;}
+.notam-item.clickable:hover{border-color:var(--cyan);}
+.notam-item.clickable:active{transform:scale(.99);}
+.notam-item.tag-restriction{border-color:var(--red);background:linear-gradient(180deg,rgba(201,68,68,.07),transparent);}
+.notam-item.tag-restriction .wtitle{color:var(--red);}
+.notam-item.tag-flag{border-color:var(--amber-dim);background:linear-gradient(180deg,rgba(255,180,84,.06),transparent);}
+.notam-item.tag-flag .wtitle{color:#8a4f0f;}
+.notam-item.tag-watch{border-color:var(--cyan);background:linear-gradient(180deg,rgba(31,122,140,.06),transparent);}
+.notam-item.tag-watch .wtitle{color:var(--cyan);}
 .notam-item .wtitle{font-size:12px;font-weight:600;color:var(--text);line-height:1.4;}
 .notam-item .wmeta{font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;}
 .notam-item .wactions{margin-top:7px;display:flex;gap:6px;flex-wrap:wrap;}
@@ -381,6 +391,7 @@ body.dark-mode .toolbar-sep{background:rgba(255,255,255,.18);}
 .validity-badge.notice{background:rgba(217,194,46,.18);color:#6b5f0a;border:1px solid #e0d15c;}
 .validity-badge.archive{background:rgba(108,133,152,.12);color:var(--text-faint);border:1px solid var(--border);}
 .validity-badge.unknown{background:rgba(255,180,84,.1);color:var(--amber);border:1px solid var(--amber-dim);}
+.validity-badge.upcoming{background:rgba(31,122,140,.1);color:var(--cyan);border:1px solid var(--cyan);}
 .warn-item.clickable{cursor:pointer;transition:border-color .15s,transform .1s;}
 .warn-item.clickable:hover{border-color:var(--cyan);}
 .warn-item.clickable:active{transform:scale(.99);}
@@ -517,6 +528,7 @@ body.dark-mode .mk-label{background:rgba(18,17,15,.85);}
 body.dark-mode .poly-label{color:#f1efe6!important;text-shadow:0 1px 3px rgba(0,0,0,.7);}
 body.dark-mode .pdf-panel{background:rgba(24,23,20,.97);}
 body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
+body.dark-mode .notam-item.tag-flag .wtitle{color:#e3a75c;}
 </style>
 </head>
 <body>
@@ -640,6 +652,10 @@ body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
         <button class="tab-btn" data-tab="archive">Archive <span class="tab-n" id="notamCountArchive">0</span></button>
         <button class="tab-btn" data-tab="all">All <span class="tab-n" id="notamCountAll">0</span></button>
       </div>
+      <div class="btn-row" id="notamBulkVisRow" style="margin-top:0;margin-bottom:8px;">
+        <button class="btn small ghost" id="notamBtnBulkShow">このタブを全て表示</button>
+        <button class="btn small ghost" id="notamBtnBulkHide">このタブを全て非表示</button>
+      </div>
       <div id="notamArchiveRow" style="display:none;gap:6px;margin-top:0;margin-bottom:10px;">
         <input type="month" id="notamArchiveMonth" style="flex:1;min-width:0;background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 6px;">
         <button class="btn small ghost" id="btnLoadNotamArchive" type="button">月を読み込み</button>
@@ -758,7 +774,16 @@ body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
 // 追加(件数バッジ付き)。パネルはMAP(自動更新)のrightPanelと同じ構成(section-title→
 // tab-row→絞り込み→一覧、下に接続セクション)に合わせた専用パネル(#notamModePanel)。
 // notamLayerもmsaLayer/manualLayerGroupと同じくenterMode()で3モード排他的に表示切替。
-const APP_VERSION = 'v1.9.2';
+// v1.9.3: NOTAM一覧の各カードを航行警報側(.warn-item)の見た目・操作感に揃えた。
+// ①カード状の枠線ボックスに(restriction/flag/watchは.warn-item.milと同じ要領で枠線・
+// タイトル色を強調)、②有効期間を.validity-badgeの色分きバッジ表示に(active/upcoming/
+// expired・cancelled系はarchive色)、③個々のNOTAMに「地図に表示」チェックボックスを追加
+// (notamHiddenMapIds、キーはnotamFeatureKey()。featureは10分おきの再取得で配列ごと
+// 差し替わるためfeature自体ではなくこの安定キーで状態を持つ)、④タブ内一括表示/非表示
+// ボタンを追加(bulkSetNotamTabVisibility)。「原文を開く」「PDF出力」「Export to Shp」は
+// MSA側が警報検索サイトのURL・詳細取得済みレコードを前提にした機能で、NOTAM側のGeoJSON
+// レコードには対応するURLが無いため今回は追加していない(HANDOFF_NOTAM.md参照)。
+const APP_VERSION = 'v1.9.3';
 
 // Small folded-corner "PDF" document glyph used on every PDF-export entry point
 // (results card, auto-mode popup, manual-mode popup). Kept as one constant so the
@@ -3076,6 +3101,17 @@ let notamLayerVisibleOnMap = true;
 let notamArchiveOnMap = false;            // Archiveは既定では地図に出さない(件数が多く、蓄積されるほど肥大するため)
 let connectedNotamUrl = null;
 let notamRefreshTimer = null;
+// 個々のNOTAMの「地図に表示」チェックボックス(航行警報側の_mapVisibleと同じ役割)。
+// notamActiveFeatures/notamArchiveFeaturesは10分おきの再取得で配列ごと差し替わり、
+// 同じfeatureオブジェクトが残り続ける保証がないため、状態はfeature自体ではなく
+// notamFeatureKey()の安定キーで持つ(OFFにしたものだけをSetに記録。既定は全件ON)。
+let notamHiddenMapIds = new Set();
+let currentNotamTabItems = []; // 直近renderNotamList()で描画したタブの一覧(一括表示/非表示ボタン用)
+function notamFeatureKey(f){
+  const p = f.properties || {};
+  return p.nms_id || (p.series && p.number ? `${p.series}${p.number}/${p.year||''}` : null)
+    || p.title || JSON.stringify((f.geometry||{}).coordinates||'');
+}
 
 function notamBaseDir(url){
   const i = url.lastIndexOf('/');
@@ -3147,7 +3183,7 @@ function rebuildNotamMapLayer(){
   if (!notamLayerVisibleOnMap) return;
   let feats = notamActiveFeatures.slice();
   if (notamArchiveOnMap) notamArchiveFeatures.forEach(arr => { feats = feats.concat(arr); });
-  feats = feats.filter(f => f.geometry && notamPassesFilter(f));
+  feats = feats.filter(f => f.geometry && notamPassesFilter(f) && !notamHiddenMapIds.has(notamFeatureKey(f)));
   if (!feats.length) return;
   L.geoJSON({ type:'FeatureCollection', features: feats }, {
     style: notamStyle,
@@ -3177,6 +3213,7 @@ function renderNotamList(){
 
   const items = notamFeaturesForTab(notamTab).filter(notamPassesFilter)
     .sort((a,b) => ((b.properties||{}).valid_start||'').localeCompare((a.properties||{}).valid_start||''));
+  currentNotamTabItems = items; // 「このタブを全て表示/非表示」ボタン用
 
   $('#notamEmptyHint').style.display = (items.length || !connectedNotamUrl) ? (items.length ? 'none' : 'block') : 'none';
   if (connectedNotamUrl && !items.length){
@@ -3186,24 +3223,38 @@ function renderNotamList(){
     $('#notamEmptyHint').textContent = 'NOTAMのURL（notam_out/notam_cn.geojson）に接続すると、ここに一覧が表示されます。';
   }
 
+  // 枠線・タイトル色の強調は空域制限(restriction)/要注意(flag)/要確認(watch)のみ
+  // (航行警報側の.warn-item.milと同じ考え方。leisure/plaintext/adminは既定色のまま)。
+  const EMPHASIZED_TAGS = new Set(['restriction','flag','watch']);
+  // 有効期間バッジの色分け(航行警報側の.validity-badgeと揃える)
+  const STATUS_BADGE_CLASS = { active:'active', upcoming:'upcoming', expired:'archive', cancelled:'archive', 'cancel-notice':'archive' };
+
   items.forEach(f=>{
     const p = f.properties || {};
+    const key = notamFeatureKey(f);
     const div = document.createElement('div');
-    div.className = 'notam-item' + (f.geometry ? ' clickable' : '');
-    const label = NOTAM_AREA_LABEL[p.area_group] || p.area_group || '';
     const tagKey = p.focus_tag || 'admin';
+    div.className = 'notam-item' + (f.geometry ? ' clickable' : '') + (EMPHASIZED_TAGS.has(tagKey) ? ` tag-${tagKey}` : '');
+    const label = NOTAM_AREA_LABEL[p.area_group] || p.area_group || '';
     const period = (p.valid_start || p.valid_end)
       ? `${esc((p.valid_start||'?').slice(0,16).replace('T',' '))} 〜 ${esc((p.valid_end||'?').slice(0,16).replace('T',' '))}`
       : '期間不明';
+    const badgeClass = STATUS_BADGE_CLASS[notamStatusOf(f)] || 'unknown';
+    const hasGeom = !!f.geometry;
+    const mapToggleHtml = hasGeom
+      ? `<label class="check-row" style="margin-top:6px;"><input type="checkbox" data-notam-map-toggle="${esc(key)}" ${notamHiddenMapIds.has(key) ? '' : 'checked'}> 地図に表示</label>`
+      : '';
     div.innerHTML = `
       <span class="wtitle">${esc(p.title || p.number || 'NOTAM')}</span>
       <div class="wmeta"><span>${esc(label)}</span><span>${esc(p.icao_location||'')}</span><span>${esc(p.q_code||'')}</span></div>
-      <div class="wmeta"><span>${esc(period)}</span></div>
+      <div class="validity-badge ${badgeClass}">有効期間 ・ ${esc(period)}</div>
       <div class="notam-tag ${esc(tagKey)}">${esc(NOTAM_FOCUS_LABEL[tagKey] || tagKey)}</div>
       ${(p.matched_keywords && p.matched_keywords.length) ? `<span class="notam-tag flag">語句一致: ${esc(p.matched_keywords.join(', '))}</span>` : ''}
-      ${(p.geometry_source||'').startsWith('qline') ? `<span class="notam-tag qline">Q項推定図形</span>` : ''}`;
+      ${(p.geometry_source||'').startsWith('qline') ? `<span class="notam-tag qline">Q項推定図形</span>` : ''}
+      ${mapToggleHtml}`;
     if (f.geometry){
-      div.addEventListener('click', ()=>{
+      div.addEventListener('click', (e)=>{
+        if (e.target.closest('a, button, label')) return; // 「地図に表示」チェックボックスのクリックはハイジャックしない
         if (f.geometry.type === 'Point'){
           const [lon,lat] = f.geometry.coordinates;
           map.setView([lat,lon], Math.max(map.getZoom(), 7));
@@ -3216,9 +3267,30 @@ function renderNotamList(){
     container.appendChild(div);
   });
 
+  $$('input[data-notam-map-toggle]').forEach(chk=>{
+    chk.addEventListener('change', ()=>{
+      const k = chk.dataset.notamMapToggle;
+      if (chk.checked) notamHiddenMapIds.delete(k); else notamHiddenMapIds.add(k);
+      rebuildNotamMapLayer();
+    });
+  });
+
   rebuildNotamMapLayer();
   updateNotamBadge();
 }
+
+// 「このタブを全て表示/非表示」: 現在のタブに表示されている(絞り込みを通過した)NOTAMだけを
+// 対象に一括で地図表示ON/OFFする(航行警報側のbulkSetTabVisibilityと同じ考え方)。
+function bulkSetNotamTabVisibility(visible){
+  currentNotamTabItems.forEach(f=>{
+    if (!f.geometry) return;
+    const k = notamFeatureKey(f);
+    if (visible) notamHiddenMapIds.delete(k); else notamHiddenMapIds.add(k);
+  });
+  renderNotamList();
+}
+$('#notamBtnBulkShow').addEventListener('click', ()=> bulkSetNotamTabVisibility(true));
+$('#notamBtnBulkHide').addEventListener('click', ()=> bulkSetNotamTabVisibility(false));
 
 function updateNotamConnectionUI(){
   const el = $('#notamConnectionStatus');
