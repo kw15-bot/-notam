@@ -2,10 +2,23 @@ name: NOTAM CN Collect
 
 on:
   workflow_dispatch:
+    inputs:
+      env:
+        description: "NMS-API environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - prod
+          - staging
+          - fit
 
 concurrency:
   group: notam-collect
   cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   collect:
@@ -21,7 +34,7 @@ jobs:
         env:
           NMS_CLIENT_ID: ${{ secrets.NMS_CLIENT_ID }}
           NMS_CLIENT_SECRET: ${{ secrets.NMS_CLIENT_SECRET }}
-          NMS_ENV: ${{ vars.NMS_ENV || 'prod' }}
+          NMS_ENV: ${{ github.event.inputs.env }}
         run: python notam_cn_collect.py --out-dir ./notam_out
 
       - name: Commit and push if changed
@@ -35,7 +48,9 @@ jobs:
           fi
           git commit -m "chore(notam): update NOTAM CN data [skip ci]"
           for i in 1 2 3 4 5; do
-            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && break
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
             echo "Push attempt $i failed, retrying..."
             sleep $((i * 3))
           done
+          echo "::error::All push attempts failed"
+          exit 1
