@@ -1,6 +1,6 @@
 # geoplot-mil NOTAM機能 引き継ぎ資料
 
-作成日: 2026-09-21 / 対象: 「航行警報海域可視化」(geoplot-mil) への **NOTAM地図化機能の追加**
+作成日: 2026-09-21 / 最終更新: 2026-09-24 / 対象: 「航行警報海域可視化」(geoplot-mil) への **NOTAM地図化機能の追加**
 
 > このファイルは NOTAM 機能の引き継ぎ専用。既存の MSA(海事局航行警告) 側の引き継ぎは別紙 `HANDOFF.md`
 > (geoplot-mil_bundle_2026-09-20.zip 内)を参照。そちらの未完了事項（デプロイ・ワークフロー実行確認など）は本資料では扱わない。
@@ -9,12 +9,14 @@
 
 ## 0. 30秒サマリ
 
-- **目的**: 中国・香港・マカオ・台湾が発行するNOTAMを10分おきに自動収集し、航行警報海域と同じように地図化する。失効分はArchiveに蓄積する。
-- **データ源**: FAA の **NMS-API**（認証情報は取得済み。環境は **staging(`api-staging.cgifederal-aim.com`)** と確定）。
-- **2026-09-24 に実データ検証済み**: probe（差分）と `--bootstrap il`（1,717件）の両方を staging で実行。収集スクリプトは実データで最後まで動作し、§8 の未確認事項の大半が確定した。詳細は §8・§14。
-- **実データ検証中に1件バグを発見し修正済み**: APIが座標未設定を `Point[0,0]` で返すケースを実座標として誤採用していた（`build_geometry()`）。修正・回帰テスト追加・テスト計32件、すべて合格。
-- **できていること**: 収集スクリプト・調査スクリプト・GitHub Actions ワークフロー2本・テスト33件（合成データ33件＋実データでの通し確認2回）。`focus_tag`(目的別の粗い絞り込みタグ。§5.4参照)を追加済み。**ビューア(`geoplot-mil.html` v1.9.0)へのNOTAMレイヤー統合も実装済み**（§10）。
-- **次にやること**: 残る未確認事項（§8の#9〜11: Qコード公式確認・再配布条件・レート制限）の確認 → **本番(prod)環境かどうかの確認**（今回はstagingのみ）→ 初回投入(`--bootstrap il`)→ ワークフロー運用開始 → ビューアの実ブラウザでの動作確認。
+- **目的**: 中国・香港・マカオ・台湾が発行するNOTAMを地図化する（航行警報海域と同じ見せ方）。失効分はArchiveに蓄積する。
+- **データ源は現在2系統**:
+  1. FAAの**NMS-API**（認証情報取得済み・**staging**で実データ検証済み。prodは未確認。再配布条件も未確認 → §8）。10分おき自動収集を想定していたが、**今はいったん保留**（下記の方針転換）。
+  2. **2026-09-24に方針転換**: NMS-APIでの自動収集と並行して、**FAAのNOTAM Search（公開サイト）のArchive機能から個別に手動で集めたサンプルを主軸に進める**ことにした。理由: NMS-APIの残る未確認事項（prod環境・再配布条件・レート制限）が片付くまで、判定ロジック（`focus_tag`・`keyword_hit`）側を実物サンプルで先に詰められるため。変換ツール`notam_paste_import.py`を用意済み（§5.5）。**ただしFAA公開サイトのArchive検索はロケーション+日付を1組ずつ指定する仕様で、一括/自動化する公式な方法は無い**（§10.7）。
+- **GitHubリポジトリが実在する**: private repoを新規作成し、ファイル一式をpush済み。**Claude Codeにワークフロー(`notam-collect.yml`/`notam-probe.yml`)の書き直しと`pages-deploy.yml`の新規追加をしてもらい**、実際にstagingで収集を1回走らせて実データ（120件）が入った状態を確認済み（§10.6）。**`pages-deploy.yml`がPrivate repoで機能するかは未確認**（無料枠はPublicのみ対応、要確認）。
+- **判定ロジックは3層構造**（§10.7に詳細）: ①収集時点でFIR/地域(CN/HK/MO/TW)を絞り込み → ②ビューアで`focus_tag`（Qコード主題による粗い分類。既定でrestriction/flag/watchのみ表示）→ ③ビューアで`keyword_hit`（本文語句一致。既定ON）。②③はAND条件で重ねる設計（片方だけでは誤検出が多いことを実データで確認済み）。
+- **できていること**: 収集スクリプト・調査スクリプト・貼り付けインポータ・GitHub Actionsワークフロー2本+Pages用1本・テスト35件・ビューア(`geoplot-mil.html` v1.9.1、NOTAMレイヤー+focus_tag+keyword_hitの絞り込みUI込み)。
+- **次にやること**: FAA Archiveから手動でサンプルを集めて`notam_paste_import.py`で取り込む運用を回し、`keyword_hit`/`focus_tag`の実用性を検証する（§9）。並行して、余裕があればNMS-API側の残課題（prod確認・再配布条件）も進める。
 
 ---
 
@@ -29,6 +31,9 @@
 | 確度判定 | **不要。人間が実施する**（軍事かどうかの自動判定機能は作らない） |
 | 開発方針 | 形が決まるまでは git を使わず**手元で試したい** |
 | 認証情報 | NMS-API の KEY/SECRET は取得済み（環境は不明 → §8 参照） |
+| リポジトリ公開範囲 | **Private**（再配布条件が未確認のため。§2・§8-10・§12） |
+| データ収集の当面の方針 | **2026-09-24〜: NMS-APIの自動収集は保留し、FAA NOTAM SearchのArchiveから個別に集めたサンプルを軸に進める**（§0・§9・§10.7） |
+| 目的別分類 | Qコード主題による粗いタグ`focus_tag`（§5.4）＋本文語句一致`keyword_hit`（§5.4・§10.5）の2層。どちらも**軍事かどうかの自動判定ではない**、あくまで人間が見る優先順位付け |
 
 > 用語: 台湾・香港・マカオは、ICAO地名指標の先頭2文字で機械的にグループ分けしているだけ（`area_group` = CN/HK/MO/TW）。表示ラベルは「中国本土/香港/マカオ/台湾」。
 
@@ -132,14 +137,16 @@ E) A TEMPORARY RESTRICTED AREA ESTABLISHED BOUNDED BY: N240013E1174036-N235732E1
 ```
 HANDOFF_NOTAM.md                       本資料
 notam_cn_probe.py                      調査用（実データで前提を確認する。書き込みは probe_out/ のみ）
-notam_cn_collect.py                    収集本体（差分取得・絞り込み・GeoJSON化・Archive）
-.github/workflows/notam-probe.yml      probe を Actions で手動実行
-.github/workflows/notam-collect.yml    収集（cron-job.org から起動）
-dev/test_notam_cn_collect.py           テスト31件（標準ライブラリのみ・合成データ）
+notam_cn_collect.py                    収集本体（差分取得・絞り込み・GeoJSON化・Archive・focus_tag・keyword_hit）
+notam_paste_import.py                  FAA NOTAM Search等から手動で集めたICAO生テキストを--fixture用JSONに変換（§5.5）
+.github/workflows/notam-probe.yml      probe を Actions で手動実行（Claude Codeが書き直し済み、§10.6）
+.github/workflows/notam-collect.yml    収集（cron-job.org から起動。同上）
+.github/workflows/pages-deploy.yml     geoplot-mil.html / notam_out/ の変更でGitHub Pagesへ自動デプロイ（Claude Codeが追加。§10.6で要確認点あり）
+dev/test_notam_cn_collect.py           テスト35件（標準ライブラリのみ・合成データ中心）
 dev/mock_nms.py                        probe用の合成データのモックAPI（127.0.0.1:8765）
 .gitignore_notam_snippet.txt           .gitignore に追記する内容
 ```
-依存: Python 3.9+ 標準ライブラリのみ。
+依存: Python 3.9+ 標準ライブラリのみ。**現在、実物のGitHubリポジトリ（Private）にこの一式がpush済み**（§10.6）。
 
 ### 5.1 `notam_cn_probe.py`（調査）
 実データで次を1回で確認する: ①認証 ②差分の窓が何時間幅まで通るか（408の有無） ③中国・香港・マカオ・台湾のNOTAMが返るか、および `classification`/`accountId`/`affectedFir`/Qコード/座標+半径/図形の入り方 ④`locationseries` から地点と accountId が引けるか（引ければ `accountability` でサーバ側絞り込みできる可能性）⑤FIR候補・空港の個別問い合わせ件数。
@@ -188,7 +195,7 @@ notam_out/
 **図形の優先順位**（`geometry_source`）: `api`(APIの面) > `text-polygon`(E項の座標列) > `qline-circle`(Q項の円・半径≤250NM・64角形) > `qline-point`(Q項の点・半径>250NMなど) > `api-point`。図形が全く取れないNOTAMは state には残すが geojson には出さない。
 
 **Feature の properties**（既存 `military.geojson` の命名に寄せた）
-`title, date, issuer(=accountId), raw_text, valid_start, valid_end, valid_raw, kind(area|point), source("nms"), nms_id, number, series, notam_type, area_group(CN|HK|MO|TW), icao_location, fir, q_code, category(restriction|warning|other), focus_tag(restriction|flag|watch|leisure|plaintext|admin), lower, upper, radius_nm, geometry_source, qline_offset_nm, estimated_end, status(active|upcoming|expired|cancelled|cancel-notice), ended_by, first_seen, last_updated`
+`title, date, issuer(=accountId), raw_text, valid_start, valid_end, valid_raw, kind(area|point), source("nms"), nms_id, number, series, notam_type, area_group(CN|HK|MO|TW), icao_location, fir, q_code, category(restriction|warning|other), focus_tag(restriction|flag|watch|leisure|plaintext|admin), keyword_hit(bool), matched_keywords(string[]), lower, upper, radius_nm, geometry_source, qline_offset_nm, estimated_end, status(active|upcoming|expired|cancelled|cancel-notice), ended_by, first_seen, last_updated`
 - `category`: QR* = restriction、QW* = warning、その他 = other（**Qコード分類の根拠は Doc 8126 の主題区分に基づく想定**。2026-09-24 に FAA 7930.2 Appendix B の正式テーブルで裏取り済み）。
 - `focus_tag`（2026-09-24 追加）: `category` を補い、Wグループの中身をさらに粗く仕分ける絞り込み用タグ。**軍事かどうかの自動判定ではない**（あくまで人間が優先的に見る順番を決めるためのラベル）。
   - `restriction` = Rグループ全部(RA/RD/RM/RO/RP/RR/RT)。
@@ -199,20 +206,37 @@ notam_out/
   - `admin` = R/W以外(空港施設・航法援助施設・運航方式等)。基本的に対象外。
   - 実データ(1,717件)での分布: `admin` 49.9% / `watch` 40.0% / `flag` 5.1% / `plaintext` 4.0% / `leisure` 0.8% / `restriction` 0.2%。**ビューアの既定表示は `admin` を除外**するだけでも見るべき件数が約半分に減る。
   - 次の判断材料が貯まったら、`flag`/`watch` の中を本文キーワード(FORBIDDEN/PROHIBITED/MILITARY等)でさらに絞れるか検討する（ユーザー方針: 今回は保留）。
+- `keyword_hit` / `matched_keywords`（2026-09-24 追加）: `raw_text`(本文全文)に対する語句一致。語句リストはユーザーが別ルートで入手したもの(`KEYWORD_LIST` = DANGER/TEMPORARY/CLSD/FORBIDDEN/PROHIBITED/DNG/CLOSED)。大文字小文字を区別しない部分一致で、ヒットした語句を`matched_keywords`に列挙し、1件でもあれば`keyword_hit=true`。
+  - **`focus_tag`/`area_group`の絞り込みを置き換えるものではなく、その上に重ねるAND条件**として使う(ビューア側の`notamPassesFilter()`も同様)。
+  - **注意**: `CLSD`/`CLOSED`は誘導路・滑走路・駐機場閉鎖など空港運用の事務連絡(`focus_tag=admin`)にも非常に高頻度でヒットする。実データ(1,717件)で`keyword_hit=true`は303件(17.6%)あったが、**その97%(294件)が`focus_tag=admin`**で、`restriction`は3件・`watch`は1件のみだった。単独運用は誤検出が多いが、`focus_tag`の既定フィルタ(`admin`を除外)と併用すれば実質的にノイズは消え、意味のある候補だけが残ることを確認済み。
+  - ユーザー提供のNOTAM実物2件(A4703/26・A4705/26、`QRTCA`)はどちらも本文に`TEMPORARY`を含み、`keyword_hit=true`になることを確認済み。
 
-### 5.4 ワークフロー
-- **`notam-probe.yml`**: 手動実行。入力 `env`(prod/staging/fit)。Secrets: `NMS_CLIENT_ID`, `NMS_CLIENT_SECRET`。`probe_out/` をアーティファクトに7日保存。
-- **`notam-collect.yml`**: `workflow_dispatch` のみ。`concurrency` で同時実行を防止。収集失敗(終了コード2)ならジョブが赤くなり**コミットしない**。変更があれば `notam_out/` を `[skip ci]` でコミットし、`git pull --rebase` + push を最大5回リトライ。Variables: `NMS_ENV`（未設定なら prod）。
-- **cron-job.org 側**: `POST https://api.github.com/repos/<OWNER>/<REPO>/actions/workflows/notam-collect.yml/dispatches`、ヘッダ `Authorization: Bearer <PAT>` / `Accept: application/vnd.github+json` / `X-GitHub-Api-Version: 2022-11-28`、body `{"ref":"main"}`、間隔10分。PATの権限は既存MSA用と同様（Actions書き込み）。**PAT失効で静かに止まる問題は既存MSA側と同じ**（Actions側の失敗検知は今回の終了コード2で一部改善したが、cron側の失効は検知できない）。
+### 5.4 ワークフロー（2026-09-24、Claude Codeによる書き直し後の内容）
+元々こちらで用意した版から、実際にリポジトリにpushして運用する段階でClaude Codeが書き直した。**中身（`notam_cn_collect.py`/`notam_cn_probe.py`自体）は無傷**で、変わったのはワークフローYAMLだけ（§10.6のdiff確認済み）。
+
+- **`notam-collect.yml`**: `NMS_ENV`をRepository Variableではなく**`workflow_dispatch`の入力(`env`、既定`staging`)**に変更。cron-job.orgからの自動起動(`{"ref":"main"}`のみ、入力省略)でも既定値`staging`が使われるので運用上問題ない。同時実行防止・失敗時コミットしない・`git pull --rebase`+push retry(5回)という設計は維持。
+- **`notam-probe.yml`**: 同様に`env`入力化（既定`staging`）。**ただし2点、地味に機能が落ちている**: ①`extra_prefixes`入力（追加ICAO接頭辞指定）が削除 ②アーティファクトアップロードから`if: always()`が消え、**probe失敗時に`probe_out`がアップロードされずデバッグ材料が残らない**。直す場合は`if: always()`を`Upload probe output`ステップに戻すだけでよい。
+- **`pages-deploy.yml`（新規追加、Claude Code）**: `geoplot-mil.html`や`notam_out/**`の変更をトリガに`actions/deploy-pages`で自動デプロイする正式な構成。**未確認の点が2つ**: ①リポジトリのSettings→Pages→Sourceを「GitHub Actions」に手動で切り替える必要がある（自動では有効にならない） ②**このリポジトリはPrivateのままのはずだが、無料プランのGitHub PagesはPublicリポジトリのみ対応**。Pro/Team/Enterpriseへのアップグレードをしたか、Publicに切り替えたかをユーザーに確認中（未回答）。Publicにした場合、`raw_text`（NOTAM本文全文）が世界に公開される点は§2・§8-10の再配布条件未確認リスクと合わせて要注意。
+- **cron-job.org 側**: `POST https://api.github.com/repos/<OWNER>/<REPO>/actions/workflows/notam-collect.yml/dispatches`、ヘッダ `Authorization: Bearer <PAT>` / `Accept: application/vnd.github+json` / `X-GitHub-Api-Version: 2022-11-28`、body `{"ref":"main"}`、間隔10分。PATはこのリポジトリへの書き込み権限が必要。**まだ登録済みかは未確認**（§9）。
+
+### 5.5 `notam_paste_import.py`（2026-09-24 追加。方針転換に伴う新規ツール）
+NMS-APIを経由せず、**FAAのNOTAM Search（公開サイト）のArchive機能などから個別にコピー貼り付けしたICAO形式の生テキスト**を、`notam_cn_collect.py`の`--fixture`がそのまま読めるJSON(Feature配列)に変換する。
+
+- 使い方: `python notam_paste_import.py pasted.txt -o pasted_fixture.json`、または`--collect-out-dir`で変換→`--fixture`投入まで一気に実行。
+- 貼り付けテキストに複数件のNOTAMが混ざっていても、`<番号>/<年> NOTAM[NRC]`の出現位置で自動的に区切る。パースできないブロックは理由を表示してスキップし、他は処理を続ける。
+- `notam_cn_collect.py`の`target_area()`等をそのまま`import`して再利用しているため、対象判定ロジックが二重管理にならない。
+- **検証済み**: ユーザー提供のNOTAM実物2件（A4703/26・A4705/26）を変換し、既存の`RealNotams`テストが検証しているのと同じ値（`geometry_source: text-polygon`、`qline_offset_nm`が138.1/0.7、`focus_tag: restriction`）が出ることを確認。同じテキストの再取り込みでも重複しない（`id`を`PASTE-<番号>-<年>`で合成し安定させているため）ことも確認済み。
+- **既知の割り切り**: 貼り付けテキストには発行日時(`issued`)が無いことが多く、有効開始時刻(B項)で代用。`accountId`（発行元）は取得不能なので常に空。
 
 ---
 
-## 6. テスト状況（32件、うち31件は合成データ・1件は実データを踏まえた回帰テスト）
+## 6. テスト状況（35件、うち大半は合成データ・一部は実データを踏まえた回帰テスト）
 
-`python dev/test_notam_cn_collect.py`（リポジトリのルートから）。カバー範囲: 対象抽出(米ARTCC・モンゴル・日本の除外、香港・マカオ・台湾の包含)、複数地点A)、ZXXX、図形の優先順位、E項多角形の度分秒パース(閉じたリング・複数エリア・分60超の無効・1点のみは面にしない)、Q項座標パース、**API座標未設定(Point[0,0])の除外**、冪等性、更新、置換/取消、取消通知が先に届くケース、即時Archive、Archive月＝失効月、Archive再登場でファイル不変、追記のみ、PERM、Q分類、実NOTAM2件（多角形採用・ずれ検出・時刻・分類）、APIモード（トークン・窓計算・408再試行・失敗時に meta 据え置き・認証エラー・認証情報なし・24h超ギャップ・bootstrap il(gz)・il解析不能・locations・dry-run・出力に秘密が混入しない）。
-- **2026-09-24、staging環境の実データで検証済み**: probe実行(delta 164件)、`--fixture`での通し確認(40件)、`--bootstrap il`での初回投入(1,871件抽出)。いずれも正常終了。
+`python dev/test_notam_cn_collect.py`（リポジトリのルートから）。カバー範囲: 対象抽出(米ARTCC・モンゴル・日本の除外、香港・マカオ・台湾の包含)、複数地点A)、ZXXX、図形の優先順位、E項多角形の度分秒パース(閉じたリング・複数エリア・分60超の無効・1点のみは面にしない)、Q項座標パース、**API座標未設定(Point[0,0])の除外**、冪等性、更新、置換/取消、取消通知が先に届くケース、即時Archive、Archive月＝失効月、Archive再登場でファイル不変、追記のみ、PERM、Q分類、`focus_tag`（実データの主要Qコードで確認）、`keyword_hit`（語句一致・複数ヒット時の順序・プロパティ存在）、実NOTAM2件（多角形採用・ずれ検出・時刻・分類）、APIモード（トークン・窓計算・408再試行・失敗時に meta 据え置き・認証エラー・認証情報なし・24h超ギャップ・bootstrap il(gz)・il解析不能・locations・dry-run・出力に秘密が混入しない）。
+- **2026-09-24、staging環境の実データで検証済み**: probe実行(delta 164件)、`--fixture`での通し確認(40件)、`--bootstrap il`での初回投入(1,871件抽出)。いずれも正常終了。**さらに実際のリポジトリ上でも収集が走り、120件の実データが入った状態を確認済み**（§10.6）。
 - 開発中に見つかった実バグ: 初期ロードがJSONでない場合に例外で落ちる → 説明付きエラーに修正済み。
 - **実データ検証で見つかった実バグ（修正済み）**: APIが座標未設定を`Point[0,0]`で返すケース（複数FIRにまたがるトリガーNOTAM等）を実座標として誤採用していた。`build_geometry()`を修正し、回帰テスト`test_zero_zero_point_rejected`を追加。
+- **`notam_paste_import.py`は上記スイートに含まれず、手動確認のみ**（§5.5）。ユーザー提供の実物2件で既存の`RealNotams`と同じ結果が出ることを個別に確認済みだが、専用のユニットテストは未整備。
 
 ## 7. 設計判断とその理由（要点）
 
@@ -257,16 +281,18 @@ notam_out/
 
 ---
 
-## 9. 次のステップ（推奨順）
+## 9. 次のステップ（推奨順、2026-09-24更新）
 
-1. **残る未確認事項の確認**（§8の#9〜11）: Qコードの公式確認（ICAO Doc 8126）、NMSデータの再配布条件（FAA `NOTAMS@faa.gov` へ照会）、レート制限。再配布条件が分かるまでは **private リポジトリ運用を推奨**（§2）。
-2. **prod環境かどうかの確認**: 今回(2026-09-24)検証したのは staging。`NMS_ENV=prod` で probe を再実行し、認証できるか・データが変わるかを確認。
-3. **`account_id`がilで`None`になる件の追加調査**（任意）: 気になるようなら `--bootstrap locations` と比較するか、ilの生レスポンスを一度保存して構造を見る。
-4. **初回投入**: `python notam_cn_collect.py --bootstrap il` → 出力(`notam_out/`)を確認してコミット。※2026-09-24にstagingで動作確認済み（1,871件抽出・1,717件をgeojson化）。
-5. **collect ワークフローを手動実行**して赤/緑とコミットを確認 → cron-job.org に10分おきで登録。
-6. **ビューア改修**（§10）。地点集計の気泡地図プロトタイプで表示イメージは確認済み（§14）。
+**今の方針は「FAA NOTAM Searchから手動で集めたサンプルで`focus_tag`/`keyword_hit`を実戦投入して様子を見る」こと**（§0）。NMS-API側の自動収集は保留中。
 
-## 10. ビューア(`geoplot-mil.html`)統合 — 2026-09-24 実装済み（v1.9.0）
+1. **手動サンプル収集を回す**: FAA NOTAM Search（`notams.aim.faa.gov`）のArchive機能で、9つの中国FIR(`ZBPE ZYSH ZSHA ZGZU ZHWH ZJSA ZPKM ZLHW ZWUQ`)＋`VHHK`(香港)＋`RCAA`(台湾)＋`VMMC`(マカオの空港コード)を対象に、地点＋日付を指定して個別検索。見つかったNOTAM本文を`notam_paste_import.py`（§5.5）で`--fixture`用JSONに変換し、`notam_cn_collect.py`に投入する。**一括/自動化の公式な方法は無い**ことを確認済み（§10.7）。
+2. **`keyword_hit`の語句リストを実サンプルで検証**: ヒット率・誤検出（特に`CLSD`）の傾向を見ながら、語句の追加・削除を検討する。
+3. **`pages-deploy.yml`の動作確認**（§10.6）: リポジトリがPrivateのままか確認し、Privateなら無料枠でPagesが機能しない旨をユーザーに再確認。Settings→Pages→Sourceの手動設定も必要。
+4. **cron-job.orgへの登録状況を確認**: 前回のGitHub公開手順案内はしたが、実際に登録済みかは未確認。
+5. **余裕があればNMS-API側の残課題も並行**（§8の#9〜11・#2 prod確認）。再配布条件が分かるまでは private リポジトリ運用を継続（既に実施中）。
+6. `notam-probe.yml`の`if: always()`欠落（§5.4）を直すかどうかは任意（probe失敗時のデバッグ材料が残らないだけで、動作自体には影響しない）。
+
+## 10. ビューア(`geoplot-mil.html`)統合 — 2026-09-24 実装済み（v1.9.1）
 
 MSA側バンドル(`geoplot-mil_bundle_2026-09-20.zip`)の `geoplot-mil.html` に、NOTAMレイヤーを追加した。
 MSA(`warningsByUrl`/`msaLayer`)とは完全に別のデータモデル・別レイヤー(`notamLayer`)・別UIで、
@@ -284,13 +310,14 @@ MSA(`warningsByUrl`/`msaLayer`)とは完全に別のデータモデル・別レ�
   `archive/notam_YYYY-MM.geojson` を都度読み込み(読み込んだ月ぶん`notamArchiveFeatures`に蓄積)。
 - 絞り込み: 地域(CN/HK/MO/TW、既定全ON)と `focus_tag`(restriction/flag/watch/leisure/
   plaintext/admin。**既定でON: restriction/flag/watch、既定でOFF: leisure/plaintext/admin**
-  — 実データでの分布・目的別分類の検討に基づく初期値)。
+  — 実データでの分布・目的別分類の検討に基づく初期値)、および**`keyword_hit`(語句一致、
+  既定ON)**（v1.9.1で追加、§10.5）。
 - 地図描画: GeoJSONをそのまま`L.geoJSON()`に渡すだけ(MSA側のような独自座標パースは不要、
   サーバー側で完成済みのため)。`geometry_source`が`qline-*`(Q項からの推定図形)のものは
   破線で描き分け。色は`focus_tag`ごと(restriction=赤/flag=琥珀/watch=シアン/その他=グレー)。
   Archiveは既定では地図に出さない(`ArchiveもMAPに表示`チェックボックスで任意にON)。
-- ポップアップ: タイトル・地域・ICAO地点・Qコード・focus_tagバッジ・有効期間・(Q項推定図形
-  なら)中心ずれ注記・本文全文。
+- ポップアップ・一覧: タイトル・地域・ICAO地点・Qコード・`focus_tag`バッジ・**`matched_keywords`
+  バッジ**(v1.9.1)・有効期間・(Q項推定図形なら)中心ずれ注記・本文全文。
 
 **未着手・今後の検討事項**:
 - Shapefile/PDF出力へのNOTAM反映（MSA側の警報と同様、今回は対象外のまま）。
@@ -298,6 +325,55 @@ MSA(`warningsByUrl`/`msaLayer`)とは完全に別のデータモデル・別レ�
 - 動作確認はNode.jsでのJS構文チェックと、実データ(`--fixture samples/cn_sample.json`)で
   再生成した`notam_cn.geojson`のプロパティ形とJS側の参照キーの突き合わせまで。実ブラウザでの
   表示確認はまだ行っていない。
+
+### 10.5 `keyword_hit`(語句一致絞り込み) — 2026-09-24 追加（v1.9.1）
+ユーザーが別ルートで入手した語句リストを本文照合に使う機能。設計方針は**「収集時点でデータを
+消さず、ビューア側の表示条件として`focus_tag`の上に重ねる」**（ユーザー合意済み）。
+
+- 語句リスト(`notam_cn_collect.py`の`KEYWORD_LIST`): `DANGER, TEMPORARY, CLSD, FORBIDDEN, PROHIBITED, DNG, CLOSED`。`raw_text`への大文字小文字を区別しない部分一致。
+- プロパティ`keyword_hit`(bool)・`matched_keywords`(配列)を`notam_cn_collect.py`側で計算し、GeoJSONに載せる（§5.3のプロパティ一覧参照）。
+- ビューアは`notamPassesFilter()`で`area_group`・`focus_tag`・`keyword_hit`を**すべてAND条件**で評価する。
+- **実データ検証**(1,717件): `keyword_hit=true`は303件(17.6%)。うち94%(284件)が`CLSD`単独ヒットで、**その97%(294/303件)が`focus_tag=admin`**（空港運用の事務連絡）だった。`restriction`タグでのヒットはわずか3件、`watch`は1件。→ **`keyword_hit`を単独で使うと`CLSD`のノイズにほぼ埋もれるが、`focus_tag`の既定フィルタ(`admin`除外)と組み合わせれば実質的にノイズは消える**ことを確認済み。
+- ユーザー提供のNOTAM実物2件(A4703/26・A4705/26、`QRTCA`)はどちらも本文に`TEMPORARY`を含み、`keyword_hit=true`になることを確認済み。
+
+### 10.6 GitHubリポジトリの実在化とClaude Codeによる変更 — 2026-09-24
+ユーザーがPrivateリポジトリを新規作成し、こちらが用意したファイル一式をpush。その後**Claude Codeにワークフローを触ってもらい**、実際にstaging環境で収集を走らせた状態(zip)を共有してもらってレビューした。
+
+- **Python/HTML(`notam_cn_collect.py`/`notam_cn_probe.py`/テスト/`geoplot-mil.html`)は無変更**（diffで確認済み）。Claude Codeが変更したのはワークフローYAMLと、新規追加の`pages-deploy.yml`のみ（§5.4に詳細）。
+- **実データが入っていた**: `notam_out/meta.json`で`active_records: 126`・`active: 8 / upcoming: 112`、最終成功`2026-09-24T09:24:57Z`。`notam_cn.geojson`は120件、スキーマも29プロパティのまま欠けなし。`archive/notam_2026-09.geojson`も13件存在。→ **収集スクリプトは実運用で無傷のまま動作することを確認**。
+- **要確認のまま残っている点**: `pages-deploy.yml`が追加されたことで、リポジトリがPrivateのままGitHub Pagesを使おうとしている可能性がある（無料枠はPublic限定）。Publicに切り替えた/有料プランに上げたのかは**ユーザーに確認したが、まだ回答を得ていない**。次のセッションで要フォロー。
+
+### 10.7 絞り込みの全体像（ユーザーから質問があったため整理・記録）
+「ビューアに表示されるものは何がどう絞られた結果か」という問いに対する回答をここに保存しておく。
+
+1. **収集時点(`notam_cn_collect.py`)で地域を絞る**: `icaoLocation`/`affectedFir`の頭2文字がCN/HK/MO/TWの対象プレフィックスでなければ、そもそも`notam_out/`のファイルに入らない（§5.2）。
+2. **ビューアで効く3つのフィルタ、すべてAND条件**:
+   - 地域(`area_group`)チェックボックス — 既定は**全部ON**(①で絞ってあるものをさらに選別する用)
+   - **`focus_tag`チェックボックス — 既定でrestriction/flag/watchのみON**。実データで`admin`だけで約半分を占めるため、実質これが一番効いている絞り込み。
+   - **`keyword_hit` — 既定ON**（§10.5）
+3. **地図(MAP)表示だけに効く追加条件**: Archiveは既定では地図に出さない(「ArchiveもMAPに表示」で任意にON)。ヘッダーの「MAPに表示」チェックボックス(既定ON)でNOTAMレイヤー全体をオンオフできる。一覧(パネル内リスト)側はタブ切り替えでArchiveも見られる。
+
+### 10.8 中国関連FIRコード一覧（参考情報、2026-09-24 ICAO資料で確認）
+ユーザーからの質問に答える過程で確認した、`AREA_BY_PREFIX`の裏付けとなるFIRの正式リスト。出典: ICAO Asia-Pacific FIR一覧PDF。
+
+| FIR名 | ICAOコード |
+|---|---|
+| 北京 Beijing | `ZBPE` |
+| 瀋陽 Shenyang | `ZYSH` |
+| 上海 Shanghai | `ZSHA` |
+| 広州 Guangzhou | `ZGZU` |
+| 武漢 Wuhan | `ZHWH` |
+| 三亜 Sanya | `ZJSA` |
+| 昆明 Kunming | `ZPKM` |
+| 蘭州 Lanzhou | `ZLHW` |
+| ウルムチ Urumqi | `ZWUQ` |
+| 香港 | `VHHK` |
+| 台北 Taipei | `RCAA` |
+
+マカオは独自FIRを持たず香港FIRの一部（空港コードは`VMMC`）。中国本土9 FIRの頭2文字は`ZB/ZY/ZS/ZG/ZH/ZJ/ZP/ZL/ZW`で、`notam_cn_collect.py`の`AREA_BY_PREFIX`(`ZB ZG ZH ZJ ZL ZP ZS ZU ZW ZY`)とちょうど対応する。**`ZU`だけはFIR名に存在しない**が、`ZUUU`(成都)等の空港コードを拾うために含めてある(§5.2に注記あり)。`ZXXX`は複数FIRにまたがるNOTAMの仮コード。
+
+### 10.9 FAA NOTAM Searchのアーカイブ検索について（参考情報、2026-09-24調査）
+FAA公式の公開ツール(`notams.aim.faa.gov`)には「Archive Search」機能があり、**過去5年分**を遡れるが、**地点(ICAO/FIRコード)と日付を1組ずつ指定する仕様**で、複数FIR・複数期間の一括検索やCSV一括ダウンロードは無い。**文書化された公開APIも無い**。裏のAJAXエンドポイントを叩けば技術的には自動化できる可能性があるが、非公式インターフェースへの依存になるため推奨しない（旧`external-api.faa.gov/notamapi`を使わなかった判断と同じ理由）。有料の第三者サービス(`notamhistory.com`、1回$4.99・世界中のFIR対応・過去2年分)も存在するが、FAA公式ではない再販業者でありデータ出所・再配布条件の不透明さはNMS-APIと同種かそれ以上。**→ 当面は手動での個別検索が現実解**（§9のステップ1）。
 
 ---
 
@@ -328,14 +404,20 @@ MSA(`warningsByUrl`/`msaLayer`)とは完全に別のデータモデル・別レ�
 
 ## 13. 新しいセッションでの再開手順
 
-1. 本バンドル(zip)と、MSA側バンドルをアップロード。あれば `samples/`（§14の実データサンプル）も。
+**GitHubリポジトリが既に存在する**（Private、§10.6）。次回以降は状況に応じて次のどちらか:
+
+- **リポジトリの現状を見てもらいたい場合**: そのリポジトリをzip化してアップロードし、「今こんな感じ」で共有する（§10.6のように差分・実データをレビューできる）。
+- **設計相談やロジック変更が主なら**: 本バンドル(zip)だけで十分。
+
+1. 本バンドル(zip)、必要なら現在のリポジトリのzipも、MSA側バンドルをアップロード。あれば`samples/`（§14の実データサンプル）も。
 2. 「`HANDOFF_NOTAM.md` を読んで引き継いで」と伝える。
-3. §9の次のステップ（1〜3）から進める。
-4. 変更後は `python dev/test_notam_cn_collect.py` で32件（以降は追加分）が通ることを確認。
+3. §9の次のステップから進める（**今の主軸はFAA NOTAM Searchからの手動サンプル収集**、§0・§10.9）。
+4. 変更後は `python dev/test_notam_cn_collect.py` で35件（以降は追加分）が通ることを確認。
+5. `notam_paste_import.py`を変更した場合は、ユーザー提供の実物2件(A4703/26・A4705/26)を通して`RealNotams`テストと同じ値が出ることを手動で確認する（専用テストは未整備、§6）。
 
 ---
 
-## 14. 2026-09-24 セッションログ（実データ検証）
+## 14. 2026-09-24 セッションログ（実データ検証〜方針転換まで）
 
 このセッションで行ったこと。今後の参考・再現用に記録する。
 
@@ -346,7 +428,19 @@ MSA(`warningsByUrl`/`msaLayer`)とは完全に別のデータモデル・別レ�
 5. **バグ発見・修正**: `notam_cn.geojson`を分析中、`geometry_source: api-point`のうち座標(0,0)のものが多数(40件サンプルで11件、1,717件中32件)見つかった。原因はAPIが座標未設定を`Point[0,0]`で返し、`build_geometry()`がそれを実座標として採用していたこと。修正し、回帰テスト`test_zero_zero_point_rejected`を追加(§6)。
 6. **台湾(TW)901件の内訳確認**: `RCAA`(台北FIR)だけで356件、うち大半が無人気球打ち上げの月次反復NOTAM(`QWLLW`)と判明（§8参照）。
 7. **地点集計の気泡地図**（120→114地点、座標(0,0)分は除外）を再度Visualizerで作成し、規模感を確認。
-8. **成果物をzipにまとめて本セッションを終了**（このファイルを含む）。
+8. **成果物をzipにまとめてセッション区切りを一度作成**。
+9. **Qコードの目的別分類を実データで検討**: ICAO Doc 8126 / FAA 7930.2 Appendix Bの正式な第2・3文字テーブルをWeb検索で確認し、1,717件を機械的に再分類。`QWMLW`(コード上は射撃/砲撃)の中身が実は**花火**が大半、`QWULW`(無人機)の中身は**民間ドローン届出**が大半など、コード名を鵜呑みにできない実例を多数発見。これを踏まえ`focus_tag`(restriction/flag/watch/leisure/plaintext/admin)を設計・実装し、テスト追加(§5.3)。
+10. **ビューア(`geoplot-mil.html`)へのNOTAMレイヤー統合**: v1.8.6→v1.9.0。MSA側のデータモデルを流用せず、独立したレイヤー・パネルとして実装(§10)。
+11. **GitHub公開手順の説明**: 別リポジトリ(Private推奨)での公開手順をstep_card形式で案内。
+12. **GitHubアップロード用ファイル一式をzipで提供**。
+13. **「Claude Codeを使った方が楽か」という質問に回答**: 今回のようなコード編集主体の作業はClaude Code向き、設計相談はこのチャット向きと整理し、`claude_code_desktop`を推薦。
+14. **Claude Codeで実際に作業した後の状態(zip)をレビュー**: Python/HTMLは無変更、ワークフローが書き直され`pages-deploy.yml`が新規追加されていることを確認。実データ(120件)が収集済みであることも確認(§10.6)。
+15. **方針転換**: ユーザーから「FAAのArchive検索機能を使って過去のNOTAMを個別に提供し、それをサンプルに進める」と提案があり合意。`notam_paste_import.py`(FAA NOTAM Search等からの生テキストを`--fixture`用JSONに変換)を新規作成し、実物2件で動作確認(§5.5)。
+16. **中国関連FIRコードの確認**: ICAO資料をWeb検索し、9 FIR＋香港＋台湾のリストを確認・記録(§10.8)。
+17. **FAA NOTAM Searchのアーカイブ検索の制約を調査**: 地点+日付を1組ずつ指定する仕様で、公式な一括/自動化手段が無いことを確認(§10.9)。
+18. **`keyword_hit`(語句一致絞り込み)を実装**: ユーザー提供の語句リスト(DANGER/TEMPORARY/CLSD/FORBIDDEN/PROHIBITED/DNG/CLOSED)で`raw_text`を照合。`focus_tag`の上に重ねるAND条件として設計・実装し、実データで`CLSD`のノイズが`focus_tag=admin`除外と組み合わせることでほぼ解消することを確認(§10.5)。ビューアにもチェックボックスと語句バッジを追加(v1.9.1)。
+19. **ビューアの絞り込みの全体像について質問があり、整理して回答**(§10.7として記録)。
+20. **本セッションのまとめとして本資料を更新**。
 
 **このセッションで得た実データサンプル**（`samples/`に同梱。再配布条件は未確認のため取り扱い注意・§8-10）
 - `samples/report.json` — probe実行結果のサマリ（staging、23h窓、delta_cn_total=164）

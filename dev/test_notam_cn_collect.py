@@ -291,6 +291,30 @@ class Fixture(unittest.TestCase):
         self.assertEqual(C.q_focus_tag(None), "admin")
         self.assertEqual(C.q_focus_tag(""), "admin")
 
+    def test_keyword_hits(self):
+        # 2026-09-24 ユーザー提供の語句リスト。大文字小文字を区別しない部分一致。
+        self.assertEqual(C.keyword_hits("A TEMPORARY RESTRICTED AREA ESTABLISHED"), ["TEMPORARY"])
+        self.assertEqual(C.keyword_hits("aircraft are forbidden to fly into the area"), ["FORBIDDEN"])
+        self.assertEqual(C.keyword_hits("REF AIP CHINA, THE RESTRICTION AREA ACTIVE"), [])
+        self.assertEqual(C.keyword_hits(None), [])
+        self.assertEqual(C.keyword_hits(""), [])
+        # 複数ヒット時はKEYWORD_LISTの順で返る
+        self.assertEqual(
+            C.keyword_hits("A TEMPORARY DANGER AREA ESTABLISHED, AIRCRAFT FORBIDDEN"),
+            ["DANGER", "TEMPORARY", "FORBIDDEN"],
+        )
+        # CLSD/CLOSEDは空港運用の事務連絡にもヒットする(既知の仕様。focus_tagと併用が前提)
+        self.assertEqual(C.keyword_hits("TWY F CLSD BTN TWY Z2 AND TWY M3"), ["CLSD"])
+
+    def test_keyword_hit_in_feature_properties(self):
+        self.put(BASE)
+        self.go()
+        p = props(self.out)
+        # BASEフィクスチャのA0102/26は本文に語句が含まれない想定 -> keyword_hit=False
+        self.assertIn("keyword_hit", p["A0101/26"])
+        self.assertIn("matched_keywords", p["A0101/26"])
+        self.assertIsInstance(p["A0101/26"]["matched_keywords"], list)
+
 
 
 # ----------------------------------------------------------------------------- 実NOTAM（ユーザー提供の本文。APIの包み方は仕様書からの推定）

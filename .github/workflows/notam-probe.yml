@@ -1,38 +1,44 @@
-name: NOTAM CN Probe
+name: NOTAM probe (NMS-API / China)
 
+# 手動実行専用。認証情報は Settings > Secrets and variables > Actions に登録する:
+#   NMS_CLIENT_ID     ... 配布Excelの KEY
+#   NMS_CLIENT_SECRET ... 配布Excelの SECRET
 on:
   workflow_dispatch:
     inputs:
       env:
-        description: "NMS-API environment"
-        required: true
-        default: "staging"
+        description: "認証情報を発行された環境"
         type: choice
-        options:
-          - prod
-          - staging
-          - fit
+        options: [prod, staging, fit]
+        default: prod
+      extra_prefixes:
+        description: "追加で対象にするICAO先頭2文字（既定で本土・香港・マカオ・台湾は含む）。通常は空欄"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
 
 jobs:
   probe:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
+          python-version: "3.12"
       - name: Run probe
         env:
+          NMS_ENV: ${{ inputs.env }}
           NMS_CLIENT_ID: ${{ secrets.NMS_CLIENT_ID }}
           NMS_CLIENT_SECRET: ${{ secrets.NMS_CLIENT_SECRET }}
-          NMS_ENV: ${{ github.event.inputs.env }}
+          CN_EXTRA_PREFIXES: ${{ inputs.extra_prefixes }}
         run: python notam_cn_probe.py
-
       - name: Upload probe output
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: notam-probe-output
+          name: notam-probe-out
           path: probe_out/
           retention-days: 7

@@ -1,56 +1,56 @@
-name: NOTAM CN Collect
+name: NOTAM collect (CN/HK/MO/TW)
 
+# cron-job.org から workflow_dispatch を叩いて起動する（既存の msa scrape.yml と同じ運用）:
+#   POST https://api.github.com/repos/<OWNER>/<REPO>/actions/workflows/notam-collect.yml/dispatches
+#   Headers: Authorization: Bearer <PAT> / Accept: application/vnd.github+json / X-GitHub-Api-Version: 2022-11-28
+#   Body:    {"ref":"main"}
+#
+# 必要な設定:
+#   Secrets   NMS_CLIENT_ID / NMS_CLIENT_SECRET
+#   Variables NMS_ENV (prod | staging | fit)  ※未設定なら prod
 on:
   workflow_dispatch:
-    inputs:
-      env:
-        description: "NMS-API environment"
-        required: true
-        default: "staging"
-        type: choice
-        options:
-          - prod
-          - staging
-          - fit
-
-concurrency:
-  group: notam-collect
-  cancel-in-progress: false
 
 permissions:
   contents: write
 
+# 同時に2本走らせない（state_active.json の競合を構造的に防ぐ）。待機中の重複は最新1本に畳まれる。
+concurrency:
+  group: notam-collect
+  cancel-in-progress: false
+
 jobs:
   collect:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Run collector
+      - name: Collect NOTAMs
         env:
+          NMS_ENV: ${{ vars.NMS_ENV || 'prod' }}
           NMS_CLIENT_ID: ${{ secrets.NMS_CLIENT_ID }}
           NMS_CLIENT_SECRET: ${{ secrets.NMS_CLIENT_SECRET }}
-          NMS_ENV: ${{ github.event.inputs.env }}
-        run: python notam_cn_collect.py --out-dir ./notam_out
+        # 取得失敗時は終了コード2でジョブが赤くなり、以降のコミットは行われない（last_successも進まない）
+        run: python notam_cn_collect.py --out-dir notam_out
 
-      - name: Commit and push if changed
+      - name: Commit changes
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add notam_out/
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add notam_out
+          if git diff --staged --quiet; then
+            echo "no changes"; exit 0
           fi
-          git commit -m "chore(notam): update NOTAM CN data [skip ci]"
+          git commit -m "Auto-update NOTAM data [skip ci]"
           for i in 1 2 3 4 5; do
-            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
-            echo "Push attempt $i failed, retrying..."
-            sleep $((i * 3))
+            if git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+            echo "push retry $i"; sleep $((RANDOM % 10 + 5))
           done
-          echo "::error::All push attempts failed"
+          echo "push failed after retries" >&2
           exit 1
