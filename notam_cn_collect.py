@@ -202,11 +202,18 @@ def keyword_hits(text):
 _REF = re.compile(r"(\S+/\d+)\s+NOTAM([NRC])(?:\s+(\S+/\d+))?")
 
 
-# E項の座標: N230636E1162812（度分秒 DDMMSS/DDDMMSS）や N2306E11628（度分）
-_TEXT_COORD = re.compile(r"([NS])(\d{4}(?:\d{2})?)\s*([EW])(\d{5}(?:\d{2})?)")
+# E項の座標: N230636E1162812（度分秒 DDMMSS/DDDMMSS）や N2306E11628（度分）。
+# 度・分・秒の2桁グループの間に空白を許容しているのは、コピペ時の折り返しで桁の途中に
+# 改行が入ることがあるため（実例: A1575/22 "N394300E1192100" が "N39\n4300E1192100" に
+# 分断されていた。空白無しなら4桁/6桁の連続数字にしかマッチせず、この点だけ無言で
+# 消えて多角形の頂点が1つ欠けたまま閉じてしまっていた）。
+_LAT_DIGITS = r"\d{2}\s*\d{2}(?:\s*\d{2})?"
+_LON_DIGITS = r"\d{3}\s*\d{2}(?:\s*\d{2})?"
+_TEXT_COORD = re.compile(rf"([NS])({_LAT_DIGITS})\s*([EW])({_LON_DIGITS})")
 
 
 def _dms(digits, deg_len):
+    digits = re.sub(r"\s+", "", digits)
     d = int(digits[:deg_len])
     m = int(digits[deg_len:deg_len + 2])
     sec = int(digits[deg_len + 2:deg_len + 4]) if len(digits) > deg_len + 2 else 0
@@ -249,10 +256,21 @@ def parse_text_polygons(e_text):
 # 座標として扱う。対応表に無い名前は unresolved_waypoints として報告する
 # (実例: A1921/26 "RUSDI-SADAN-N364427E0874615-RUSDI" — 対応表があれば3点とも解決でき、
 # 表が無ければ4点中1点しか座標が無い)。
-_CHAIN_COORD = r"[NS]\d{4}(?:\d{2})?[EW]\d{5}(?:\d{2})?"
+_CHAIN_COORD = rf"[NS]{_LAT_DIGITS}\s*[EW]{_LON_DIGITS}"
 _CHAIN_NAME = r"\b[A-Z]{3,8}\b"
 _CHAIN_TOKEN = rf"(?:{_CHAIN_COORD}|{_CHAIN_NAME})"
 _BOUNDARY_CHAIN = re.compile(rf"{_CHAIN_TOKEN}(?:\s*-\s*{_CHAIN_TOKEN}){{2,}}")
+
+
+def _coord_from_token(tok):
+    """1トークンが座標(N/S..E/W..、桁間の空白/改行も許容)なら[lon,lat]を返す。そうでなければNone。"""
+    cm = _TEXT_COORD.fullmatch(tok.strip())
+    if not cm:
+        return None
+    lat, lon = _dms(cm[2], 2), _dms(cm[4], 3)
+    if lat is None or lon is None or lat > 90 or lon > 180:
+        return None
+    return [round(lon if cm[3] == "E" else -lon, 6), round(lat if cm[1] == "N" else -lat, 6)]
 
 _WAYPOINTS_PATH = Path(__file__).resolve().parent / "notam_waypoints_cn.json"
 _waypoints_cache = None
@@ -285,11 +303,10 @@ def parse_boundary_waypoints(e_text):
     wp = load_waypoints()
     pts, unresolved, seen = [], [], set()
     for tok in re.split(r"\s*-\s*", m.group(0)):
-        cm = re.fullmatch(r"([NS])(\d{4}(?:\d{2})?)([EW])(\d{5}(?:\d{2})?)", tok)
-        if cm:
-            lat, lon = _dms(cm[2], 2), _dms(cm[4], 3)
-            if lat is not None and lon is not None and lat <= 90 and lon <= 180:
-                pts.append([round(lon if cm[3] == "E" else -lon, 6), round(lat if cm[1] == "N" else -lat, 6)])
+        tok = tok.strip()
+        coord = _coord_from_token(tok)
+        if coord:
+            pts.append(coord)
         elif tok in wp:
             pts.append(wp[tok])
         elif tok not in seen:
@@ -303,10 +320,13 @@ def parse_boundary_waypoints(e_text):
     return ring, pts, unresolved
 
 
-# 航空路(ATS route)区間の閉鎖。境界の多角形ではなく、区間ごとの線分。
+# 航空路(ATS route)区間の閉鎖。境界の多角形ではなく、区間ごとの線分(2点とは限らない。
+# 実例A1496/22の "Y1: MAGOD - MEPEP - N350737E1000535." は3点のポリライン)。
 # 実例(2022年、ユーザー提供、A1945/22): "1.Y1: MAGOD - IRTOL." "2.W192: TUSLI - DUMIN."
-# 経路識別子(Y1/W192/W112等、英字1-3文字+数字1-4桁)+コロン+地名点2つ(ハイフン区切り)。
-_ROUTE_SEG = re.compile(r"\b[A-Z]{1,3}\d{1,4}:\s*([A-Z]{3,8})\s*-\s*([A-Z]{3,8})\b")
+# 経路識別子(Y1/W192/W112/L888等、英字1-3文字+数字1-4桁)+コロン+地点2つ以上(ハイフン区切り、
+# 地名点・座標どちらも可)。1つでも解決できない地点があれば、その区間全体を捨てる
+# (誤った位置の線を引かない。境界のparse_boundary_waypoints()と同じ方針)。
+_ROUTE_LINE = re.compile(rf"[A-Z]{{1,3}}\d{{1,4}}:\s*{_CHAIN_TOKEN}(?:\s*-\s*{_CHAIN_TOKEN})+")
 
 # 地名点中心・km単位の円。同じ実例の4項: "SEGMENT WITHIN A CIRCLE CENTERED AT DUMIN
 # WITH RADIUS OF 30KM"。Q項の円(中心が座標・半径NM)とは別の記法。
@@ -317,9 +337,9 @@ KM_PER_NM = 1.852
 
 
 def parse_route_segments_and_circle(e_text):
-    """航空路区間の閉鎖(2点1組の線分、複数可)と、地名点中心・km単位の円を対応表
+    """航空路区間の閉鎖(2点以上のポリライン、複数可)と、地名点中心・km単位の円を対応表
     (notam_waypoints_cn.json)で解決する。戻り値 (segments, circle, unresolved_names)。
-      segments: [[ptA, ptB], ...]（両端が解決できた区間のみ、[lon,lat]のペア）。
+      segments: [[pt1, pt2, ...], ...]（全点が解決できた区間のみ、各[lon,lat]のリスト）。
       circle: {"center": [lon,lat], "radius_nm": float}（中心が解決でき、半径が
                CIRCLE_MAX_NM以内の場合のみ）。無ければ None。
       unresolved_names: 対応表にも無かった地点名(順序維持・重複除去)。
@@ -327,15 +347,25 @@ def parse_route_segments_and_circle(e_text):
     e_text = e_text or ""
     wp = load_waypoints()
     segs, unresolved, seen = [], [], set()
-    for a, b in _ROUTE_SEG.findall(e_text):
-        pa, pb = wp.get(a), wp.get(b)
-        if pa and pb:
-            segs.append([pa, pb])
-        else:
-            for name in (a, b):
-                if name not in wp and name not in seen:
+    for m in _ROUTE_LINE.finditer(e_text):
+        _, _, chain = m.group(0).partition(":")
+        pts, bad = [], []
+        for tok in re.split(r"\s*-\s*", chain.strip()):
+            tok = tok.strip()
+            coord = _coord_from_token(tok)
+            if coord:
+                pts.append(coord)
+            elif tok in wp:
+                pts.append(wp[tok])
+            else:
+                bad.append(tok)
+        if bad:
+            for name in bad:
+                if name not in seen:
                     seen.add(name)
                     unresolved.append(name)
+        elif len(pts) >= 2:
+            segs.append(pts)
     circle = None
     m = _NAMED_CIRCLE.search(e_text)
     if m:
@@ -407,13 +437,22 @@ def build_geometry(feature, n, e_text=""):
         geom = {"type": "Polygon", "coordinates": [rings[0]]} if len(rings) == 1 \
             else {"type": "MultiPolygon", "coordinates": [[r] for r in rings]}
         return geom, "text-polygon", None
-    wp_ring, wp_points, wp_names = parse_boundary_waypoints(e_text)
+    # 航空路区間の記述("Y1: MAGOD - MEPEP - N350737E1000535."等)は、経路識別子の
+    # 接頭辞を無視すればハイフン境界チェーンにも見えてしまう(実例A1496/22で誤って
+    # 閉じた多角形として解釈していた)。境界パーサーにかける前にその範囲を空白化して
+    # 誤認識を防ぐ(parse_route_segments_and_circle側は元のe_textをそのまま使う)。
+    boundary_text = _ROUTE_LINE.sub(lambda m: " " * len(m.group(0)), e_text or "")
+    wp_ring, wp_points, wp_names = parse_boundary_waypoints(boundary_text)
     if wp_ring:
         # 境界の地名有意点(waypoint)が全て notam_waypoints_cn.json で解決できた。
         return {"type": "Polygon", "coordinates": [wp_ring]}, "text-polygon-waypoint", None
     if wp_names and wp_points:
-        # 一部の地名点が対応表にも無く、多角形にできない。解決できた座標だけを目安の点として
-        # 使い、どの地点名が未解決かを報告する。
+        # 一部の地名点が対応表にも無く、閉じた多角形にはできない。解決できた点が2つ以上あれば、
+        # 出現順につないだ線分にする方が、単一の点より「境界のどの区間が分かっているか」を
+        # 素直に示せる(未解決の地点をまたぐ区間は繋がらないので、そこが分からないことも
+        # 視覚的に表れる)。1点しか解決できなければ点のまま。
+        if len(wp_points) >= 2:
+            return {"type": "LineString", "coordinates": wp_points}, "text-line-incomplete", wp_names
         return {"type": "Point", "coordinates": wp_points[0]}, "text-point-incomplete", wp_names
     segs, circle, seg_unresolved = parse_route_segments_and_circle(e_text)
     if segs or circle:

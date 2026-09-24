@@ -380,8 +380,10 @@ FAA公式の公開ツール(`notams.aim.faa.gov`)には「Archive Search」機�
 ## 11. 既知の制約・残課題
 
 - E項のパースは基本的に**座標列の多角形のみ**。「半径◯KMの円」「弧」「扇形」「回廊(線)」などの記述は未対応（1点だけの記述は面にせず、Q項の円/点にフォールバック）。
-  - 例外: 境界列挙(ハイフン区切り、3点以上)に**地名有意点(waypoint。例: RUSDI/SADAN)の名前**が混じるケースは、`notam_waypoints_cn.json`(opennav.com由来、ユーザー提供、2026-09-24時点558件)を名前→座標の対応表として引き、全点解決できれば多角形にする(`geometry_source: text-polygon-waypoint`)。対応表に無い名前が残れば、解決できた座標だけを目安の点として出し(`text-point-incomplete`)、未解決の名前を`unresolved_waypoints`で報告する。
-  - `Y1: MAGOD-IRTOL`のような**航空路区間の閉鎖**(2点1組×複数行、線分)や、`CIRCLE CENTERED AT <地名点> WITH RADIUS OF ◯KM`のような**地名点中心・km単位の円**にも対応済み(`parse_route_segments_and_circle()`)。両端/中心が対応表で解決できた区間・円だけを`LineString`/`Polygon`として拾い、`GeometryCollection`(複数図形なら)または単体の`geometry_source: text-route-segments`として出力する。解決できない地点は区間ごと捨てて`unresolved_waypoints`に記録(部分的な誤った線は描かない)。実例: A1945/22。
+  - 例外: 境界列挙(ハイフン区切り、3点以上)に**地名有意点(waypoint。例: RUSDI/SADAN)の名前**が混じるケースは、`notam_waypoints_cn.json`(opennav.com由来、ユーザー提供、2026-09-24時点558件)を名前→座標の対応表として引き、全点解決できれば多角形にする(`geometry_source: text-polygon-waypoint`)。対応表に無い名前が残れば、**解決できた点(2点以上あれば出現順につないだ線分`text-line-incomplete`、1点だけなら点`text-point-incomplete`)**を出し、未解決の名前を`unresolved_waypoints`で報告する(単一の点より「境界のどこまで分かっているか」を示せるため線分を優先)。
+  - `Y1: MAGOD-IRTOL-N350737E1000535`のような**航空路区間の閉鎖**(2点以上のポリライン。地名点・座標の混在可、複数行)や、`CIRCLE CENTERED AT <地名点> WITH RADIUS OF ◯KM`のような**地名点中心・km単位の円**にも対応済み(`parse_route_segments_and_circle()`)。全点/中心が対応表で解決できた区間・円だけを`LineString`/`Polygon`として拾い、`GeometryCollection`(複数図形なら)または単体の`geometry_source: text-route-segments`として出力する。解決できない区間はまるごと捨てて`unresolved_waypoints`に記録(部分的な誤った線は描かない)。実例: A1945/22、A1496/22(3点ポリライン)。
+    - **境界(エリア)と航空路(線)の判別**: `"Y1: MAGOD - MEPEP - N350737E1000535"`のように経路識別子付きの行は、接頭辞を無視すればハイフン境界チェーンにも見えてしまうため、境界パーサーに渡す前に航空路行の範囲を空白化して誤認識を防いでいる(修正前は実例A1496/22で誤って閉じた多角形にされていた)。
+  - 座標の度分秒(DDMMSS)は、コピペ時の折り返しで桁の途中に改行/空白が入ることを許容する(実例: A1575/22の`N394300E1192100`が`N39\n4300E1192100`に分断されており、修正前はこの頂点が無言で消えて多角形が1点欠けたまま閉じていた)。
 - 座標書式は `N/S…E/W…`（度分秒 or 度分）のみ。`DDMMSS N` 形式など別書式は未対応。
 - 複数エリアの列挙は「先頭点に戻ったらリングを閉じる」規則。閉じない列挙は1つのリングになる。
 - 反子午線(±180°)をまたぐ図形は考慮していない（対象地域では不要）。

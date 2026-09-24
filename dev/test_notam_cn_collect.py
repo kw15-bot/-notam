@@ -410,9 +410,9 @@ class RealNotams(unittest.TestCase):
         self.assertAlmostEqual(ring[2][1], 36 + 44 / 60 + 27 / 3600, places=5)
         self.assertAlmostEqual(ring[2][0], 87 + 46 / 60 + 15 / 3600, places=5)
 
-    def test_boundary_with_unresolved_waypoint_name(self):
-        # 対応表に無い地名点が混じる場合は、多角形にはせず(不正確な形を描かない)、
-        # 解決できた座標だけを目安の点として出し、未解決の名前を報告する。
+    def test_boundary_with_unresolved_waypoint_name_draws_line(self):
+        # 対応表に無い地名点が混じる場合は、閉じた多角形にはせず(不正確な形を描かない)、
+        # 解決できた点(2点以上)を出現順につないだ線分として出し、未解決の名前を報告する。
         raw = ("A9999/22 NOTAMN Q) ZWUQ/QRTCA/IV/BO/W/000/999/ A) ZWUQ B) 2207190100 C) 2207190300 "
                "E) ACFT ARE FORBIDDEN ENTER FLW AREA: RUSDI-NOWAYP-N364427E0874615-RUSDI. F) GND G) UNL")
         feat = real_feat(raw, "ZWUQ", "ZWUQ", None, None, "9999")
@@ -420,9 +420,29 @@ class RealNotams(unittest.TestCase):
         g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
         self.assertIn("A9999/22", g)
         p = g["A9999/22"]["properties"]
-        self.assertEqual(p["geometry_source"], "text-point-incomplete")
+        self.assertEqual(p["geometry_source"], "text-line-incomplete")
         self.assertEqual(p["unresolved_waypoints"], ["NOWAYP"])
-        self.assertEqual(g["A9999/22"]["geometry"]["type"], "Point")
+        geom = g["A9999/22"]["geometry"]
+        self.assertEqual(geom["type"], "LineString")
+        wp = C.load_waypoints()
+        # NOWAYPをまたぐ区間は繋がらない: RUSDI -> (N364427E0874615) -> RUSDI という
+        # 「行って戻る」線になり、欠けている区間があることが視覚的にも分かる。
+        self.assertEqual(geom["coordinates"][0], wp["RUSDI"])
+        self.assertEqual(geom["coordinates"][2], wp["RUSDI"])
+        self.assertAlmostEqual(geom["coordinates"][1][1], 36 + 44 / 60 + 27 / 3600, places=5)
+
+    def test_boundary_with_only_one_resolvable_point_stays_a_point(self):
+        # 解決できた点が1つしか無ければ線にできないので、点のまま。
+        raw = ("A9998/22 NOTAMN Q) ZWUQ/QRTCA/IV/BO/W/000/999/ A) ZWUQ B) 2207190100 C) 2207190300 "
+               "E) ACFT ARE FORBIDDEN ENTER FLW AREA: NOWAYA-NOWAYB-N364427E0874615. F) GND G) UNL")
+        feat = real_feat(raw, "ZWUQ", "ZWUQ", None, None, "9998")
+        self.assertEqual(self.go([feat]), 0)
+        g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
+        self.assertIn("A9998/22", g)
+        p = g["A9998/22"]["properties"]
+        self.assertEqual(p["geometry_source"], "text-point-incomplete")
+        self.assertEqual(p["unresolved_waypoints"], ["NOWAYA", "NOWAYB"])
+        self.assertEqual(g["A9998/22"]["geometry"]["type"], "Point")
 
     def test_route_segments_and_named_circle(self):
         # 実例(2022年、ユーザー提供): 航空路(ATS route)区間の閉鎖(2点1組×複数行、線分)と、
@@ -465,6 +485,57 @@ class RealNotams(unittest.TestCase):
         self.assertEqual(p["unresolved_waypoints"], ["NOWAYP"])
         geom = g["A1946/22"]["geometry"]
         self.assertEqual(geom["type"], "LineString")   # 1本だけなのでGeometryCollectionにしない
+
+    def test_route_segment_with_three_points_is_a_polyline(self):
+        # 実例(2022年、ユーザー提供、A1496/22): 区間が2点とは限らない
+        # ("Y1: MAGOD - MEPEP - N350737E1000535." は3点のポリライン、地名点と座標が混在)。
+        # 経路識別子つきの行は、境界(エリア)のハイフン列パーサーに誤って先取りされて
+        # 閉じた多角形にされてはいけない(修正前はここが text-polygon-waypoint になっていた)。
+        raw = ("A1496/22 NOTAMN Q) ZLHW/QARLC/IV/NBO/E/000/999/ A) ZLHW B) 2206210050 C) 2206210820 "
+               "E) FLW SEGMENT OF ATS RTE CLSD: "
+               "1.Y1: MAGOD - MEPEP - N350737E1000535. "
+               "2.W192: RUSDI - DUMIN. "
+               "3.L888: TONAX - MUMAN. "
+               "4.Y2: MEPEP - N335654E0982918. F) GND G) UNL")
+        feat = real_feat(raw, "ZLHW", "ZLHW", None, None, "1496")
+        self.assertEqual(self.go([feat]), 0)
+        g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
+        self.assertIn("A1496/22", g)
+        p = g["A1496/22"]["properties"]
+        self.assertEqual(p["geometry_source"], "text-route-segments")
+        self.assertEqual(p["unresolved_waypoints"], [])
+        geom = g["A1496/22"]["geometry"]
+        self.assertEqual(geom["type"], "GeometryCollection")
+        wp = C.load_waypoints()
+        y1 = next(sub["coordinates"] for sub in geom["geometries"] if sub["coordinates"][0] == wp["MAGOD"])
+        self.assertEqual(len(y1), 3)                    # MAGOD -> MEPEP -> 座標 の3点ポリライン
+        self.assertEqual(y1[1], wp["MEPEP"])
+        self.assertAlmostEqual(y1[2][1], 35 + 7 / 60 + 37 / 3600, places=5)   # N350737
+        self.assertAlmostEqual(y1[2][0], 100 + 5 / 60 + 35 / 3600, places=5)  # E1000535
+
+    def test_boundary_coordinate_split_by_linewrap(self):
+        # 実例(2022年、ユーザー提供、A1575/22): コピペ時の折り返しで座標の桁の途中に改行が
+        # 入っていた("N394300E1192100" が "N39\n4300E1192100" に分断)。修正前はこの5点目が
+        # 無言で消え、4頂点の四角形として閉じてしまっていた(本来は5頂点の五角形)。
+        e_text = ("A TEMPORARY PROHIBITED AREA ESTABLISHED BOUNDED BY:\n"
+                  "N395600E1192100-N395600E1193300-N395100E1193900-N394300E1193900-N39\n"
+                  "4300E1192100\n"
+                  "BACK TO START.\n"
+                  "ALL ACFT SHALL BE FORBIDDEN TO FLY INTO THE PROHIBITED AREA.\n"
+                  "VERTICAL LIMITS:GND-UNL.")
+        raw = f"A1575/22 NOTAMN Q) ZBPE/QRPCA/IV/NBO/W/000/999/3949N11930E009 A) ZBPE B) 2206301600 C) 2208311600 E) {e_text} F) GND G) UNL"
+        feat = real_feat(raw, "ZBPE", "ZBPE", "3949N11930E", "009", "1575")
+        self.assertEqual(self.go([feat]), 0)
+        g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
+        self.assertIn("A1575/22", g)
+        p = g["A1575/22"]["properties"]
+        self.assertEqual(p["geometry_source"], "text-polygon")
+        ring = g["A1575/22"]["geometry"]["coordinates"][0]
+        self.assertEqual(len(ring), 6)                   # 5頂点 + 閉じるための繰り返し1点
+        self.assertEqual(ring[0], ring[-1])
+        # N394300E1192100 = 39°43'00"N 119°21'00"E (改行で分断されていた5点目)
+        self.assertAlmostEqual(ring[4][1], 39 + 43 / 60, places=5)
+        self.assertAlmostEqual(ring[4][0], 119 + 21 / 60, places=5)
 
     def test_qline_offset_flags_bad_center(self):
         self.go(self.feats())
