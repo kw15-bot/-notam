@@ -244,34 +244,63 @@ def parse_text_polygons(e_text):
 
 
 # 境界列挙(ハイフン区切り、3点以上)には、座標の代わりに地名有意点(waypoint。例: RUSDI/SADAN。
-# ICAO Doc 8126の5文字系統名コードが多い)が混じることがある。名前→座標の対応表を持たないため
-# 解決はできないが、少なくとも「解決できた座標」と「解決できなかった地点名」を報告する
-# (実例: A1921/22 "RUSDI-SADAN-N364427E0874615-RUSDI" — 4点中3点が地名点)。
+# ICAO Doc 8126の5文字系統名コードが多い)が混じることがある。notam_waypoints_cn.json(ユーザー
+# 提供、opennav.com由来、2026-09-24時点557件)を名前→座標の対応表として引き、解決できたものは
+# 座標として扱う。対応表に無い名前は unresolved_waypoints として報告する
+# (実例: A1921/26 "RUSDI-SADAN-N364427E0874615-RUSDI" — 対応表があれば3点とも解決でき、
+# 表が無ければ4点中1点しか座標が無い)。
 _CHAIN_COORD = r"[NS]\d{4}(?:\d{2})?[EW]\d{5}(?:\d{2})?"
-_CHAIN_NAME = r"[A-Z]{3,8}"
+_CHAIN_NAME = r"\b[A-Z]{3,8}\b"
 _CHAIN_TOKEN = rf"(?:{_CHAIN_COORD}|{_CHAIN_NAME})"
 _BOUNDARY_CHAIN = re.compile(rf"{_CHAIN_TOKEN}(?:\s*-\s*{_CHAIN_TOKEN}){{2,}}")
 
+_WAYPOINTS_PATH = Path(__file__).resolve().parent / "notam_waypoints_cn.json"
+_waypoints_cache = None
+
+
+def load_waypoints():
+    """notam_waypoints_cn.json (地名点名 -> [lon, lat]) を読み込む。無ければ空辞書。"""
+    global _waypoints_cache
+    if _waypoints_cache is None:
+        try:
+            _waypoints_cache = json.loads(_WAYPOINTS_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _waypoints_cache = {}
+    return _waypoints_cache
+
 
 def parse_boundary_waypoints(e_text):
-    """parse_text_polygons() が多角形を作れなかった場合のフォールバック。境界列挙の中から
-    座標トークンと地名点候補を区別する。戻り値 (coords, waypoint_names)。coordsは解決できた
-    座標([lon,lat])のリスト、waypoint_namesは解決できなかった地点名(順序維持・重複除去)。
-    ハイフン列自体が無ければ ([], [])。"""
+    """parse_text_polygons() が多角形を作れなかった場合のフォールバック。境界列挙(ハイフン区切り、
+    3点以上)を座標トークン・対応表で解決できた地名点・解決できなかった地名点に分類する。
+    戻り値 (ring, points, unresolved_names)。
+      ring: 全点が解決できて閉じたリング([lon,lat]のリスト、先頭=末尾)にできた場合のみ。
+            できなければ None。
+      points: 解決できた座標([lon,lat])のリスト(ringが作れない場合のフォールバック用に、
+              少なくとも1点あれば使う)。
+      unresolved_names: 対応表にも無かった地点名(順序維持・重複除去)。
+    ハイフン列自体が無ければ (None, [], [])。"""
     m = _BOUNDARY_CHAIN.search(e_text or "")
     if not m:
-        return [], []
-    coords, names, seen = [], [], set()
+        return None, [], []
+    wp = load_waypoints()
+    pts, unresolved, seen = [], [], set()
     for tok in re.split(r"\s*-\s*", m.group(0)):
         cm = re.fullmatch(r"([NS])(\d{4}(?:\d{2})?)([EW])(\d{5}(?:\d{2})?)", tok)
         if cm:
             lat, lon = _dms(cm[2], 2), _dms(cm[4], 3)
             if lat is not None and lon is not None and lat <= 90 and lon <= 180:
-                coords.append([round(lon if cm[3] == "E" else -lon, 6), round(lat if cm[1] == "N" else -lat, 6)])
+                pts.append([round(lon if cm[3] == "E" else -lon, 6), round(lat if cm[1] == "N" else -lat, 6)])
+        elif tok in wp:
+            pts.append(wp[tok])
         elif tok not in seen:
             seen.add(tok)
-            names.append(tok)
-    return coords, names
+            unresolved.append(tok)
+    ring = None
+    if not unresolved and len(pts) >= 3:
+        ring = pts + [pts[0]] if pts[0] != pts[-1] else pts
+        if len(ring) < 4:
+            ring = None
+    return ring, pts, unresolved
 
 
 def ring_centroid(ring):
@@ -328,11 +357,14 @@ def build_geometry(feature, n, e_text=""):
         geom = {"type": "Polygon", "coordinates": [rings[0]]} if len(rings) == 1 \
             else {"type": "MultiPolygon", "coordinates": [[r] for r in rings]}
         return geom, "text-polygon", None
-    wp_coords, wp_names = parse_boundary_waypoints(e_text)
-    if wp_names and wp_coords:
-        # 境界の一部が地名有意点(waypoint)で、名前→座標の対応表を持たないため多角形にできない。
-        # 解決できた座標だけを目安の点として使い、どの地点名が未解決かを報告する。
-        return {"type": "Point", "coordinates": wp_coords[0]}, "text-point-incomplete", wp_names
+    wp_ring, wp_points, wp_names = parse_boundary_waypoints(e_text)
+    if wp_ring:
+        # 境界の地名有意点(waypoint)が全て notam_waypoints_cn.json で解決できた。
+        return {"type": "Polygon", "coordinates": [wp_ring]}, "text-polygon-waypoint", None
+    if wp_names and wp_points:
+        # 一部の地名点が対応表にも無く、多角形にできない。解決できた座標だけを目安の点として
+        # 使い、どの地点名が未解決かを報告する。
+        return {"type": "Point", "coordinates": wp_points[0]}, "text-point-incomplete", wp_names
     c = parse_qline_coord(n.get("coordinates"))
     try:
         r = float(n.get("radius")) if n.get("radius") not in (None, "") else None
@@ -378,7 +410,7 @@ def make_record(feature, now):
         radius = None
     offset = None                                   # Q項の中心と、実際の図形の重心とのずれ(NM)。品質チェック用
     qc = parse_qline_coord(n.get("coordinates"))
-    if qc and geom and geom["type"] in ("Polygon", "MultiPolygon") and gsrc in ("api", "text-polygon"):
+    if qc and geom and geom["type"] in ("Polygon", "MultiPolygon") and gsrc in ("api", "text-polygon", "text-polygon-waypoint"):
         ring = geom["coordinates"][0] if geom["type"] == "Polygon" else geom["coordinates"][0][0]
         offset = round(nm_between(ring_centroid(ring), qc), 1)
     return {
