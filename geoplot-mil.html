@@ -3158,12 +3158,16 @@ function notamPopupHtml(f){
     ? `<div class="pop-mono">${esc((p.valid_start||'?').replace('T',' ').replace('Z',''))} 〜 ${esc((p.valid_end||'?').replace('T',' ').replace('Z',''))}</div>` : '';
   const srcNote = (p.geometry_source || '').startsWith('qline')
     ? `<div class="pop-mono" style="color:var(--amber);">図形はQ項からの推定（${esc(p.geometry_source)}${p.qline_offset_nm ? `・中心ずれ約${Math.round(p.qline_offset_nm)}NM` : ''}）</div>` : '';
+  // 境界に地名有意点(waypoint)が混ざっていて解決できなかった場合の注記(notam_cn_collect.py
+  // の parse_boundary_waypoints() 参照)。表示している点は境界の一部にすぎないので、その旨を明示する。
+  const wpNote = (p.unresolved_waypoints && p.unresolved_waypoints.length)
+    ? `<div class="pop-mono" style="color:var(--amber);">境界に未解決の地点あり（${esc(p.unresolved_waypoints.join(', '))}）。表示位置は境界の一部のみ</div>` : '';
   const rawText = p.raw_text ? `<div class="pop-mono" style="white-space:pre-wrap;max-height:160px;overflow-y:auto;margin-top:6px;">${esc(p.raw_text)}</div>` : '';
   const kwHtml = (p.matched_keywords && p.matched_keywords.length)
     ? `<span class="notam-tag flag">語句一致: ${esc(p.matched_keywords.join(', '))}</span>` : '';
   return `<div class="pop-title">${esc(p.title || p.number || 'NOTAM')}</div>`
     + `<div class="pop-mono">${esc(label)} / ${esc(p.icao_location||'')} / ${esc(p.q_code||'')}</div>`
-    + `<div class="notam-tag ${esc(p.focus_tag||'admin')}">${esc(tag)}</div>${kwHtml}${period}${srcNote}${rawText}`;
+    + `<div class="notam-tag ${esc(p.focus_tag||'admin')}">${esc(tag)}</div>${kwHtml}${period}${srcNote}${wpNote}${rawText}`;
 }
 
 // タブ(Active/Upcoming/Archive/All)ごとの一覧対象。Active/Upcomingは接続中URLのfeaturesの

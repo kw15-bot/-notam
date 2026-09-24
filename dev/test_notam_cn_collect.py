@@ -376,6 +376,25 @@ class RealNotams(unittest.TestCase):
         self.assertAlmostEqual(ring[0][0], 116 + 28 / 60 + 12 / 3600, places=5)
         self.assertEqual(ring[0], ring[-1])
 
+    def test_boundary_with_unresolved_waypoints(self):
+        # 実例(2022年、ユーザー提供): 境界の4点中2点が座標ではなく地名有意点(waypoint)の名前
+        # (RUSDI/SADAN)。Q項にも座標・半径が無い(空欄)ため、修正前は no_geometry で
+        # 地図から完全に漏れていた。
+        raw = ("A1921/22 NOTAMN Q) ZWUQ/QRTCA/IV/BO/W/000/999/ A) ZWUQ B) 2207190100 C) 2207190300 "
+               "E) ACFT ARE FORBIDDEN ENTER FLW AREA: RUSDI-SADAN-N364427E0874615-RUSDI. F) GND G) UNL")
+        feat = real_feat(raw, "ZWUQ", "ZWUQ", None, None, "1921")
+        self.assertEqual(self.go([feat]), 0)
+        g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
+        self.assertIn("A1921/22", g)
+        p = g["A1921/22"]["properties"]
+        self.assertEqual(p["geometry_source"], "text-point-incomplete")
+        self.assertEqual(p["unresolved_waypoints"], ["RUSDI", "SADAN"])
+        self.assertEqual(g["A1921/22"]["geometry"]["type"], "Point")
+        # N364427E0874615 = 36°44'27"N 87°46'15"E
+        lon, lat = g["A1921/22"]["geometry"]["coordinates"]
+        self.assertAlmostEqual(lat, 36 + 44 / 60 + 27 / 3600, places=5)
+        self.assertAlmostEqual(lon, 87 + 46 / 60 + 15 / 3600, places=5)
+
     def test_qline_offset_flags_bad_center(self):
         self.go(self.feats())
         p = props(self.out)

@@ -243,6 +243,37 @@ def parse_text_polygons(e_text):
     return rings
 
 
+# 境界列挙(ハイフン区切り、3点以上)には、座標の代わりに地名有意点(waypoint。例: RUSDI/SADAN。
+# ICAO Doc 8126の5文字系統名コードが多い)が混じることがある。名前→座標の対応表を持たないため
+# 解決はできないが、少なくとも「解決できた座標」と「解決できなかった地点名」を報告する
+# (実例: A1921/22 "RUSDI-SADAN-N364427E0874615-RUSDI" — 4点中3点が地名点)。
+_CHAIN_COORD = r"[NS]\d{4}(?:\d{2})?[EW]\d{5}(?:\d{2})?"
+_CHAIN_NAME = r"[A-Z]{3,8}"
+_CHAIN_TOKEN = rf"(?:{_CHAIN_COORD}|{_CHAIN_NAME})"
+_BOUNDARY_CHAIN = re.compile(rf"{_CHAIN_TOKEN}(?:\s*-\s*{_CHAIN_TOKEN}){{2,}}")
+
+
+def parse_boundary_waypoints(e_text):
+    """parse_text_polygons() が多角形を作れなかった場合のフォールバック。境界列挙の中から
+    座標トークンと地名点候補を区別する。戻り値 (coords, waypoint_names)。coordsは解決できた
+    座標([lon,lat])のリスト、waypoint_namesは解決できなかった地点名(順序維持・重複除去)。
+    ハイフン列自体が無ければ ([], [])。"""
+    m = _BOUNDARY_CHAIN.search(e_text or "")
+    if not m:
+        return [], []
+    coords, names, seen = [], [], set()
+    for tok in re.split(r"\s*-\s*", m.group(0)):
+        cm = re.fullmatch(r"([NS])(\d{4}(?:\d{2})?)([EW])(\d{5}(?:\d{2})?)", tok)
+        if cm:
+            lat, lon = _dms(cm[2], 2), _dms(cm[4], 3)
+            if lat is not None and lon is not None and lat <= 90 and lon <= 180:
+                coords.append([round(lon if cm[3] == "E" else -lon, 6), round(lat if cm[1] == "N" else -lat, 6)])
+        elif tok not in seen:
+            seen.add(tok)
+            names.append(tok)
+    return coords, names
+
+
 def ring_centroid(ring):
     pts = ring[:-1]
     return sum(p[1] for p in pts) / len(pts), sum(p[0] for p in pts) / len(pts)      # (lat, lon)
@@ -268,7 +299,8 @@ def _valid_polygon(coords):
 
 
 def build_geometry(feature, n, e_text=""):
-    """(geometry|None, source)。優先順: APIの面 > E項テキストの多角形 > Q項の円 > Q項の点 > APIの点。
+    """(geometry|None, source, unresolved_waypoints|None)。優先順:
+    APIの面 > E項テキストの多角形 > E項の地名点混じり境界(部分的) > Q項の円 > Q項の点 > APIの点。
     Q項の中心座標は誤記がありうる（実データで、E項の多角形から138NMずれた例を確認）ため、
     E項に多角形があればそちらを正とする。"""
     g = feature.get("geometry") or {}
@@ -290,24 +322,29 @@ def build_geometry(feature, n, e_text=""):
     if polys:
         geom = {"type": "Polygon", "coordinates": polys[0]} if len(polys) == 1 \
             else {"type": "MultiPolygon", "coordinates": polys}
-        return geom, "api"
+        return geom, "api", None
     rings = parse_text_polygons(e_text)
     if rings:
         geom = {"type": "Polygon", "coordinates": [rings[0]]} if len(rings) == 1 \
             else {"type": "MultiPolygon", "coordinates": [[r] for r in rings]}
-        return geom, "text-polygon"
+        return geom, "text-polygon", None
+    wp_coords, wp_names = parse_boundary_waypoints(e_text)
+    if wp_names and wp_coords:
+        # 境界の一部が地名有意点(waypoint)で、名前→座標の対応表を持たないため多角形にできない。
+        # 解決できた座標だけを目安の点として使い、どの地点名が未解決かを報告する。
+        return {"type": "Point", "coordinates": wp_coords[0]}, "text-point-incomplete", wp_names
     c = parse_qline_coord(n.get("coordinates"))
     try:
         r = float(n.get("radius")) if n.get("radius") not in (None, "") else None
     except (TypeError, ValueError):
         r = None
     if c and r is not None and 0 < r <= CIRCLE_MAX_NM:
-        return {"type": "Polygon", "coordinates": [circle_ring(c[0], c[1], r)]}, "qline-circle"
+        return {"type": "Polygon", "coordinates": [circle_ring(c[0], c[1], r)]}, "qline-circle", None
     if c:
-        return {"type": "Point", "coordinates": [round(c[1], 6), round(c[0], 6)]}, "qline-point"
+        return {"type": "Point", "coordinates": [round(c[1], 6), round(c[0], 6)]}, "qline-point", None
     if points:
-        return {"type": "Point", "coordinates": points[0]}, "api-point"
-    return None, None
+        return {"type": "Point", "coordinates": points[0]}, "api-point", None
+    return None, None, (wp_names or None)
 
 
 # ----------------------------------------------------------------------------- レコード
@@ -334,7 +371,7 @@ def make_record(feature, now):
         ntype = m[2]                       # 本文の N/R/C を優先
         ref = m[3] if ntype in ("R", "C") else None
     e_text = e_section(icao_text, n.get("text"))
-    geom, gsrc = build_geometry(feature, n, e_text)
+    geom, gsrc, unresolved_waypoints = build_geometry(feature, n, e_text)
     try:
         radius = float(n["radius"]) if n.get("radius") not in (None, "") else None
     except (TypeError, ValueError):
@@ -359,6 +396,7 @@ def make_record(feature, now):
         "text": n.get("text"), "icao_text": icao_text, "local_text": local_text,
         "last_updated": n.get("lastUpdated"),
         "geometry": geom, "geometry_source": gsrc, "qline_offset_nm": offset,
+        "unresolved_waypoints": unresolved_waypoints,
         "first_seen": iso(now), "ended_by": None, "end_override": None,
     }
 
@@ -454,6 +492,7 @@ def to_feature(rec, now):
             "lower": rec.get("lower"), "upper": rec.get("upper"),
             "radius_nm": rec.get("radius_nm"), "geometry_source": rec.get("geometry_source"),
             "qline_offset_nm": rec.get("qline_offset_nm"),
+            "unresolved_waypoints": rec.get("unresolved_waypoints") or [],
             "estimated_end": rec.get("estimated"), "status": status_of(rec, now),
             "ended_by": rec.get("ended_by"), "first_seen": rec.get("first_seen"),
             "last_updated": rec.get("last_updated"),
