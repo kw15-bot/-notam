@@ -2,6 +2,16 @@ name: NOTAM CN Collect
 
 on:
   workflow_dispatch:
+    inputs:
+      env:
+        description: "NMS-API environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - prod
+          - staging
+          - fit
 
 concurrency:
   group: notam-collect
@@ -21,7 +31,7 @@ jobs:
         env:
           NMS_CLIENT_ID: ${{ secrets.NMS_CLIENT_ID }}
           NMS_CLIENT_SECRET: ${{ secrets.NMS_CLIENT_SECRET }}
-          NMS_ENV: ${{ vars.NMS_ENV || 'prod' }}
+          NMS_ENV: ${{ github.event.inputs.env }}
         run: python notam_cn_collect.py --out-dir ./notam_out
 
       - name: Commit and push if changed
