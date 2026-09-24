@@ -71,8 +71,9 @@ body{
 }
 .app.mode-auto{display:grid;grid-template-columns:380px 1fr;}
 .app.mode-manual{display:grid;grid-template-columns:380px 1fr;}
+.app.mode-notam{display:grid;grid-template-columns:380px 1fr;}
 @media (max-width:1100px){
-  .app.mode-auto,.app.mode-manual{grid-template-columns:1fr;}
+  .app.mode-auto,.app.mode-manual,.app.mode-notam{grid-template-columns:1fr;}
   .app{grid-template-rows:52px auto 46vh auto; overflow-y:auto; height:auto; min-height:100vh;}
   html,body{overflow:auto;}
   .map-wrap{height:46vh;min-height:320px;}
@@ -110,8 +111,9 @@ body{
 /* 手動モードでは警報一覧そのものを扱わないので、ティッカーは表示しない(旧
    header-spacerと同じ、見た目には何も無いflex:1の空き領域に戻す。レイアウト用に
    要素自体は両モードで存在させたまま、枠と中身だけをCSSで消す)。 */
-.app.mode-manual .header-ticker{background:transparent;border-color:transparent;}
-.app.mode-manual .header-ticker-track,.app.mode-manual .header-ticker-empty{display:none;}
+.app.mode-manual .header-ticker,.app.mode-notam .header-ticker{background:transparent;border-color:transparent;}
+.app.mode-manual .header-ticker-track,.app.mode-manual .header-ticker-empty,
+.app.mode-notam .header-ticker-track,.app.mode-notam .header-ticker-empty{display:none;}
 .notif-wrap{position:relative;}
 .notif-bell{
   position:relative;background:transparent;border:1px solid transparent;border-radius:8px;
@@ -158,39 +160,12 @@ body{
 .notif-item-dismiss:hover{color:var(--red);}
 .notif-panel .empty-hint{padding:16px 12px;font-size:11.5px;}
 
-/* ---------- NOTAM panel (header 🛰 button) ----------
-   notif-panel(新着の警告)と同じ「ヘッダーのボタン→右下に開くドロップダウン」の作りを
-   踏襲。ただし中身(接続・タブ・絞り込み・一覧)を持つぶん幅は広め。モード(自動/手動)に
-   関係なくヘッダーに常時表示されるので、どちらのモードからでも開ける。 */
-.notam-wrap{position:relative;}
-.notam-bell{
-  position:relative;background:transparent;border:1px solid transparent;border-radius:8px;
-  font-size:15px;line-height:1;padding:6px 9px;cursor:pointer;color:var(--text-dim);
-}
-.notam-bell:hover{background:var(--panel-alt);border-color:var(--border);}
-.notam-badge{
-  position:absolute;top:1px;right:1px;min-width:16px;height:16px;padding:0 4px;
-  display:flex;align-items:center;justify-content:center;
-  background:var(--cyan);color:#fff;font-family:var(--mono);font-size:10px;font-weight:700;
-  border-radius:9px;line-height:1;
-}
-.notam-panel{
-  display:none;position:absolute;top:calc(100% + 8px);right:0;width:400px;max-height:75vh;
-  overflow-y:auto;background:var(--panel-raised);border:1px solid var(--border-bright);
-  border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);z-index:50;
-}
-.notam-panel-head{
-  display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
-  padding:10px 12px;border-bottom:1px solid var(--border);
-  font-size:12px;color:var(--text-dim);position:sticky;top:0;background:var(--panel-raised);z-index:1;
-}
-.notam-panel .section{padding:10px 12px;}
-.notam-panel .empty-hint{padding:16px 12px;font-size:11.5px;}
-.notam-filters{font-family:var(--mono);font-size:10.5px;color:var(--text-faint);}
+/* ---------- NOTAM mode (専用の第3モード。MAP（自動更新）のrightPanelと同じ構成) ---------- */
+.notam-filters{font-family:var(--mono);font-size:10.5px;color:var(--text-faint);margin-top:10px;}
 .notam-filters .flabel{color:var(--text-dim);font-weight:600;margin:8px 0 4px;}
 .notam-filters .flabel:first-child{margin-top:0;}
 .notam-filters label.check-row{display:inline-flex;margin:2px 10px 2px 0;font-size:11px;}
-.notam-item{border-bottom:1px solid var(--border);padding:10px 12px;}
+.notam-item{border-bottom:1px solid var(--border);padding:10px 0;}
 .notam-item.clickable{cursor:pointer;transition:border-color .15s;}
 .notam-item.clickable:hover{background:var(--panel-alt);}
 .notam-item .wtitle{font-size:12px;font-weight:600;color:var(--text);line-height:1.4;}
@@ -475,6 +450,7 @@ select{
 }
 .mode-tab:hover{color:var(--text);background:var(--panel-raised);}
 .mode-tab.active{background:var(--phosphor);color:#fff;font-weight:700;}
+.mode-tab .tab-n{margin-left:4px;opacity:.8;}
 .app-version{
   font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-right:10px;
   user-select:all; /* easy to select+copy when reporting a bug */
@@ -483,7 +459,9 @@ select{
 .app.mode-auto [data-mode-section="auto"]{display:block;}
 .app.mode-manual [data-mode-section="manual"]{display:block;}
 .app.mode-manual .panel[data-mode-section="manual"]{display:flex;} /* .panel uses flex column, not block */
-.app.mode-manual #rightPanel{display:none;}
+.app.mode-notam [data-mode-section="notam"]{display:block;}
+.app.mode-notam .panel[data-mode-section="notam"]{display:flex;}
+.app.mode-manual #rightPanel,.app.mode-notam #rightPanel{display:none;}
 
 /* ---------- Dark mode ----------
    Toggled by clicking the small dot left of the brand text (see the brandDot click
@@ -549,60 +527,12 @@ body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
     <div class="mode-tabs" id="modeTabs">
       <button class="mode-tab active" data-mode="auto">MAP（自動更新）</button>
       <button class="mode-tab" data-mode="manual">MAP（手動）</button>
+      <button class="mode-tab" data-mode="notam">NOTAM <span class="tab-n" id="notamModeBadge"></span></button>
     </div>
     <div class="header-ticker" id="headerTicker">
       <div class="header-ticker-track" id="headerTickerTrack"></div>
     </div>
     <span class="app-version" id="appVersion"></span>
-    <div class="notam-wrap">
-      <button id="btnNotamBell" class="notam-bell" title="NOTAM（中国・香港・マカオ・台湾）">🛰<span id="notamBadge" class="notam-badge" style="display:none;">0</span></button>
-      <div class="notam-panel" id="notamPanel">
-        <div class="notam-panel-head">
-          <span>NOTAM（中国・香港・マカオ・台湾）</span>
-          <label class="check-row" style="margin:0;"><input type="checkbox" id="chkNotamLayerVisible" checked> MAPに表示</label>
-        </div>
-        <div class="section">
-          <div class="url-connect-row" style="display:flex;gap:6px;">
-            <input type="text" id="notamUrlInput" placeholder="http://127.0.0.1:8743/notam_out/notam_cn.geojson"
-                   style="flex:1;min-width:0;background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 8px;">
-            <button class="btn small ghost" id="btnConnectNotamUrl" type="button">接続</button>
-          </div>
-          <div id="notamConnectionStatus" style="display:none;margin-top:8px;padding:8px 10px;background:var(--panel-alt);border:1px solid var(--border-bright);border-radius:8px;font-size:11px;color:var(--text-dim);"></div>
-        </div>
-        <div class="section">
-          <div class="tab-row" id="notamValidityTabs" style="margin-bottom:8px;">
-            <button class="tab-btn active" data-tab="active">Active <span class="tab-n" id="notamCountActive">0</span></button>
-            <button class="tab-btn" data-tab="upcoming">Upcoming <span class="tab-n" id="notamCountUpcoming">0</span></button>
-            <button class="tab-btn" data-tab="archive">Archive <span class="tab-n" id="notamCountArchive">0</span></button>
-            <button class="tab-btn" data-tab="all">All <span class="tab-n" id="notamCountAll">0</span></button>
-          </div>
-          <div id="notamArchiveRow" style="display:none;gap:6px;margin-bottom:8px;">
-            <input type="month" id="notamArchiveMonth" style="flex:1;min-width:0;background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 6px;">
-            <button class="btn small ghost" id="btnLoadNotamArchive" type="button">月を読み込み</button>
-            <label class="check-row" style="margin:0;"><input type="checkbox" id="chkNotamArchiveOnMap"> ArchiveもMAPに表示</label>
-          </div>
-          <div class="notam-filters">
-            <div class="flabel">地域</div>
-            <label class="check-row"><input type="checkbox" class="notam-area-chk" value="CN" checked>中国本土</label>
-            <label class="check-row"><input type="checkbox" class="notam-area-chk" value="HK" checked>香港</label>
-            <label class="check-row"><input type="checkbox" class="notam-area-chk" value="MO" checked>マカオ</label>
-            <label class="check-row"><input type="checkbox" class="notam-area-chk" value="TW" checked>台湾</label>
-            <div class="flabel">分類（focus_tag）</div>
-            <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="restriction" checked>空域制限</label>
-            <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="flag" checked>要注意</label>
-            <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="watch" checked>要確認</label>
-            <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="leisure">レジャー/民間</label>
-            <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="plaintext">未分類(平文)</label>
-            <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="admin">施設事務連絡</label>
-            <div class="flabel">語句一致(keyword_hit)</div>
-            <label class="check-row"><input type="checkbox" id="chkNotamKeywordOnly" checked>語句に合致するものだけ表示</label>
-            <div style="font-size:9.5px;color:var(--text-faint);margin-top:2px;">DANGER / TEMPORARY / CLSD / FORBIDDEN / PROHIBITED / DNG / CLOSED（本文への部分一致。地域・分類の絞り込みと併用されます）</div>
-          </div>
-        </div>
-        <div id="notamList"></div>
-        <div class="empty-hint" id="notamEmptyHint">NOTAMのURL（notam_out/notam_cn.geojson）に接続すると、ここに一覧が表示されます。</div>
-      </div>
-    </div>
     <div class="notif-wrap">
       <button id="btnNotifBell" class="notif-bell" title="新着の警告">🔔<span id="notifBadge" class="notif-badge" style="display:none;">0</span></button>
       <div class="notif-panel" id="notifPanel">
@@ -696,6 +626,58 @@ body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
     </div>
   </div>
 
+  <!-- NOTAM: MAP（自動更新）のrightPanelと同じ構成（section-title→tab-row→絞り込み→
+       一覧、下に接続セクション）で作った専用モード。他モードと排他（enterMode参照）。 -->
+  <div class="panel left" id="notamModePanel" data-mode-section="notam">
+    <div class="section" id="notamResultsSection">
+      <div class="section-title">
+        NOTAM（中国・香港・マカオ・台湾）
+        <label class="check-row" style="margin:0;"><input type="checkbox" id="chkNotamLayerVisible" checked> MAPに表示</label>
+      </div>
+      <div class="tab-row" id="notamValidityTabs">
+        <button class="tab-btn active" data-tab="active">Active <span class="tab-n" id="notamCountActive">0</span></button>
+        <button class="tab-btn" data-tab="upcoming">Upcoming <span class="tab-n" id="notamCountUpcoming">0</span></button>
+        <button class="tab-btn" data-tab="archive">Archive <span class="tab-n" id="notamCountArchive">0</span></button>
+        <button class="tab-btn" data-tab="all">All <span class="tab-n" id="notamCountAll">0</span></button>
+      </div>
+      <div id="notamArchiveRow" style="display:none;gap:6px;margin-top:0;margin-bottom:10px;">
+        <input type="month" id="notamArchiveMonth" style="flex:1;min-width:0;background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 6px;">
+        <button class="btn small ghost" id="btnLoadNotamArchive" type="button">月を読み込み</button>
+        <label class="check-row" style="margin:0;"><input type="checkbox" id="chkNotamArchiveOnMap"> ArchiveもMAPに表示</label>
+      </div>
+      <div class="notam-filters">
+        <div class="flabel">地域</div>
+        <label class="check-row"><input type="checkbox" class="notam-area-chk" value="CN" checked>中国本土</label>
+        <label class="check-row"><input type="checkbox" class="notam-area-chk" value="HK" checked>香港</label>
+        <label class="check-row"><input type="checkbox" class="notam-area-chk" value="MO" checked>マカオ</label>
+        <label class="check-row"><input type="checkbox" class="notam-area-chk" value="TW" checked>台湾</label>
+        <div class="flabel">分類（focus_tag）</div>
+        <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="restriction" checked>空域制限</label>
+        <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="flag" checked>要注意</label>
+        <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="watch" checked>要確認</label>
+        <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="leisure">レジャー/民間</label>
+        <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="plaintext">未分類(平文)</label>
+        <label class="check-row"><input type="checkbox" class="notam-focus-chk" value="admin">施設事務連絡</label>
+        <div class="flabel">語句一致(keyword_hit)</div>
+        <label class="check-row"><input type="checkbox" id="chkNotamKeywordOnly" checked>語句に合致するものだけ表示</label>
+        <div style="font-size:9.5px;color:var(--text-faint);margin-top:2px;">DANGER / TEMPORARY / CLSD / FORBIDDEN / PROHIBITED / DNG / CLOSED（本文への部分一致。地域・分類の絞り込みと併用されます）</div>
+      </div>
+      <div id="notamList"></div>
+      <div class="empty-hint" id="notamEmptyHint">NOTAMのURL（notam_out/notam_cn.geojson）に接続すると、ここに一覧が表示されます。</div>
+    </div>
+
+    <!-- MAP（自動更新）の「military.geojsonに接続」セクションと同じ構成・配置。 -->
+    <div class="section">
+      <div class="section-title">notam_cn.geojson に接続</div>
+      <div class="url-connect-row" style="display:flex;gap:6px;">
+        <input type="text" id="notamUrlInput" placeholder="http://127.0.0.1:8743/notam_out/notam_cn.geojson"
+               style="flex:1;min-width:0;background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 8px;">
+        <button class="btn small ghost" id="btnConnectNotamUrl" type="button">接続</button>
+      </div>
+      <div id="notamConnectionStatus" style="display:none;margin-top:10px;padding:8px 10px;background:var(--panel-alt);border:1px solid var(--border-bright);border-radius:8px;font-size:11.5px;color:var(--text-dim);"></div>
+    </div>
+  </div>
+
   <!-- CENTER: map -->
   <div class="map-wrap">
     <div id="map"></div>
@@ -771,7 +753,12 @@ body.dark-mode .warn-item.mil .wtitle{color:#e3a75c;}
 // のkeyword_hits()、ユーザー提供の語句リスト: DANGER/TEMPORARY/CLSD/FORBIDDEN/PROHIBITED/
 // DNG/CLOSED、本文への大文字小文字を区別しない部分一致)。area_group/focus_tagの絞り込みを
 // 置き換えるのではなく、その上に重ねるAND条件(既定ON=語句に合致するものだけ表示)。
-const APP_VERSION = 'v1.9.1';
+// v1.9.2: NOTAMをヘッダーの🛰ドロップダウンパネルから、MAP(自動更新)/MAP(手動)と同格の
+// 第3のモードタブに変更(UI整理)。ヘッダーの notam-wrap は撤去し、modeTabsに「NOTAM」を
+// 追加(件数バッジ付き)。パネルはMAP(自動更新)のrightPanelと同じ構成(section-title→
+// tab-row→絞り込み→一覧、下に接続セクション)に合わせた専用パネル(#notamModePanel)。
+// notamLayerもmsaLayer/manualLayerGroupと同じくenterMode()で3モード排他的に表示切替。
+const APP_VERSION = 'v1.9.2';
 
 // Small folded-corner "PDF" document glyph used on every PDF-export entry point
 // (results card, auto-mode popup, manual-mode popup). Kept as one constant so the
@@ -1505,9 +1492,8 @@ const msaLayer = L.layerGroup().addTo(map);
 const historyLayers = new Map(); // id -> layerGroup
 const historyMeta = new Map(); // id -> { title, raw_text } -- used by manual-mode popups + PDF export
 
-// NOTAM(中国・香港・マカオ・台湾)レイヤー。MSA(msaLayer)/手動(manualLayerGroup)とは別物で、
-// enterMode()のモード切替対象に含めていない -- MAP(自動更新)/MAP(手動)どちらのモードでも
-// 常時マップ上に残る(NOTAMパネル自体はヘッダーの🛰ボタンからどちらのモードでも開ける)。
+// NOTAM(中国・香港・マカオ・台湾)レイヤー。MSA(msaLayer)/手動(manualLayerGroup)と同じく、
+// enterMode()で3モード排他的に表示切替される専用モード(MAP自動更新/MAP手動/NOTAM)。
 const notamLayer = L.layerGroup().addTo(map);
 
 map.on('mousemove', (e)=>{
@@ -3065,9 +3051,9 @@ $('#geojsonUrlInput').addEventListener('keydown', (e)=>{
    8c. NOTAM(中国・香港・マカオ・台湾) — notam_cn_collect.py の出力(notam_out/notam_cn.geojson
    + notam_out/archive/notam_YYYY-MM.geojson)を読み込んで地図化する。詳細は
    HANDOFF_NOTAM.md(geoplot-notam_bundle_*.zip)参照。MSA側(warningsByUrl/msaLayer)とは
-   完全に独立したデータモデル・レイヤー・パネルで、enterMode()のモード切替(自動/手動)の
-   対象外 — どちらのモードでもヘッダーの🛰ボタンから開閉でき、地図上のNOTAM図形も
-   常時表示され続ける。
+   完全に独立したデータモデル・レイヤー・パネルで、MAP(自動更新)/MAP(手動)と同格の
+   第3のモード(data-mode-section="notam")としてenterMode()で排他的に切り替わる
+   (v1.9.2でヘッダーのドロップダウンパネルから専用モードへ変更)。
 --------------------------------------------------------------- */
 const NOTAM_AREA_LABEL = { CN:'中国本土', HK:'香港', MO:'マカオ', TW:'台湾' };
 // focus_tag はQコード(主題)による絞り込み用の粗いタグであって、軍事かどうかの自動判定
@@ -3172,9 +3158,8 @@ function rebuildNotamMapLayer(){
 
 function updateNotamBadge(){
   const n = notamActiveFeatures.filter(f => notamStatusOf(f) === 'active' && notamPassesFilter(f)).length;
-  const badge = $('#notamBadge');
-  if (n > 0){ badge.style.display = 'flex'; badge.textContent = n > 99 ? '99+' : String(n); }
-  else { badge.style.display = 'none'; }
+  const badge = $('#notamModeBadge');
+  if (badge) badge.textContent = n;
 }
 
 function renderNotamList(){
@@ -3226,7 +3211,6 @@ function renderNotamList(){
           const b = L.geoJSON(f).getBounds();
           if (b.isValid()) map.fitBounds(b.pad(0.3));
         }
-        $('#notamPanel').style.display = 'none';
       });
     }
     container.appendChild(div);
@@ -3330,18 +3314,6 @@ $('#btnConnectNotamUrl').addEventListener('click', ()=>{
 $('#notamUrlInput').addEventListener('keydown', (e)=>{ if (e.key === 'Enter') $('#btnConnectNotamUrl').click(); });
 $('#btnLoadNotamArchive').addEventListener('click', ()=> loadNotamArchiveMonth($('#notamArchiveMonth').value));
 
-$('#btnNotamBell').addEventListener('click', (e)=>{
-  e.stopPropagation();
-  const panel = $('#notamPanel');
-  panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
-});
-document.addEventListener('click', (e)=>{
-  const panel = $('#notamPanel');
-  if (panel.style.display === 'block' && !panel.contains(e.target) && e.target.id !== 'btnNotamBell'){
-    panel.style.display = 'none';
-  }
-});
-
 renderNotamList();
 
 // ?notam=<url> があればそれを、無ければ ?geojson=<url>(MSA側の自動接続)から
@@ -3363,15 +3335,14 @@ renderWarnList();
 
 function enterMode(mode){
   const app = $('#mainApp');
-  app.classList.remove('mode-auto','mode-manual');
-  app.classList.add(mode === 'manual' ? 'mode-manual' : 'mode-auto');
+  app.classList.remove('mode-auto','mode-manual','mode-notam');
+  app.classList.add(mode === 'manual' ? 'mode-manual' : mode === 'notam' ? 'mode-notam' : 'mode-auto');
   $$('#modeTabs .mode-tab').forEach(btn=> btn.classList.toggle('active', btn.dataset.mode === mode));
-  // Each mode only shows its own shapes on the map -- auto-mode results (msaLayer) vs.
-  // manual-mode plots (manualLayerGroup, which itself wraps manualLayer + every history
-  // entry) are mutually exclusive on the map. Without this, switching modes left the
-  // previous mode's shapes visibly on the map.
-  const wantLayer = mode === 'manual' ? manualLayerGroup : msaLayer;
-  [manualLayerGroup, msaLayer].forEach(lg=>{
+  // 3モードとも地図上の表示は排他 -- auto(msaLayer) / manual(manualLayerGroup) / notam(notamLayer)。
+  // 以前はnotamLayerだけ全モード常時表示だったが、NOTAMが専用モードになったのでここでも
+  // 他の2つと同じ扱いにする(切替時に前のモードの図形が残らないように)。
+  const wantLayer = mode === 'manual' ? manualLayerGroup : mode === 'notam' ? notamLayer : msaLayer;
+  [manualLayerGroup, msaLayer, notamLayer].forEach(lg=>{
     const shouldShow = (lg === wantLayer);
     if (shouldShow && !map.hasLayer(lg)) lg.addTo(map);
     if (!shouldShow && map.hasLayer(lg)) map.removeLayer(lg);
@@ -3391,6 +3362,8 @@ function enterMode(mode){
   }, 50);
   logLine(mode === 'manual'
     ? '手動貼り付けモードで開始しました。座標を貼り付けてプロットしてください。'
+    : mode === 'notam'
+    ? 'NOTAMモードで開始しました。notam_out/notam_cn.geojsonをURL指定で取り込んでください。10分ごとに自動再取込できます（ローカルサーバー経由推奨）。'
     : '自動収集モードで開始しました。military.geojsonをファイル選択・ドラッグ＆ドロップ・URL指定のいずれかで取り込んでください。URLを指定すれば30分ごとに自動再取込できます（ローカルサーバー経由推奨、start_msa_loop.bat参照）。'
   );
 }
