@@ -424,6 +424,48 @@ class RealNotams(unittest.TestCase):
         self.assertEqual(p["unresolved_waypoints"], ["NOWAYP"])
         self.assertEqual(g["A9999/22"]["geometry"]["type"], "Point")
 
+    def test_route_segments_and_named_circle(self):
+        # 実例(2022年、ユーザー提供): 航空路(ATS route)区間の閉鎖(2点1組×複数行、線分)と、
+        # 地名点中心・km単位の円。エリアの多角形とは違う書き方で、境界のハイフン列(3点以上)
+        # パーサーの対象外(各行2点のみ)。全地点が対応表で解決できる。
+        raw = ("A1945/22 NOTAMN Q) ZLHW/QARLC/IV/NBO/E/000/999/ A) ZLHW B) 2207210250 C) 2207210510 "
+               "E) FLW SEGMENT OF ATS RTE CLSD: "
+               "1.Y1: MAGOD - IRTOL. 2.W192: TUSLI - DUMIN. 3.W112: ADMUX - TUSLI. "
+               "4.SEGMENT WITHIN A CIRCLE CENTERED AT DUMIN WITH RADIUS OF 30KM. F) GND G) UNL")
+        feat = real_feat(raw, "ZLHW", "ZLHW", None, None, "1945")
+        self.assertEqual(self.go([feat]), 0)
+        g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
+        self.assertIn("A1945/22", g)
+        p = g["A1945/22"]["properties"]
+        self.assertEqual(p["geometry_source"], "text-route-segments")
+        self.assertEqual(p["unresolved_waypoints"], [])
+        geom = g["A1945/22"]["geometry"]
+        self.assertEqual(geom["type"], "GeometryCollection")
+        types = sorted(sub["type"] for sub in geom["geometries"])
+        self.assertEqual(types, ["LineString", "LineString", "LineString", "Polygon"])
+        wp = C.load_waypoints()
+        magod_irtol = [sub["coordinates"] for sub in geom["geometries"]
+                       if sub["type"] == "LineString" and sub["coordinates"] == [wp["MAGOD"], wp["IRTOL"]]]
+        self.assertEqual(len(magod_irtol), 1)          # Y1: MAGOD - IRTOL がこの順で線分になっている
+        # 円はDUMIN中心・半径30km(=約16.198NM)相当。中心からリング上の点までの距離で確認。
+        circle_ring = next(sub["coordinates"][0] for sub in geom["geometries"] if sub["type"] == "Polygon")
+        d = C.nm_between((wp["DUMIN"][1], wp["DUMIN"][0]), (circle_ring[0][1], circle_ring[0][0]))
+        self.assertAlmostEqual(d, 30 / C.KM_PER_NM, delta=0.1)
+
+    def test_route_segments_with_unresolved_name_are_skipped(self):
+        # 区間の片端が対応表に無ければ、その線分だけ捨てて未解決名を報告する
+        # (もう一方の解決できた区間はそのまま使う)。
+        raw = ("A1946/22 NOTAMN Q) ZLHW/QARLC/IV/NBO/E/000/999/ A) ZLHW B) 2207210250 C) 2207210510 "
+               "E) FLW SEGMENT OF ATS RTE CLSD: 1.Y1: MAGOD - NOWAYP. 2.W192: TUSLI - DUMIN. F) GND G) UNL")
+        feat = real_feat(raw, "ZLHW", "ZLHW", None, None, "1946")
+        self.assertEqual(self.go([feat]), 0)
+        g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
+        p = g["A1946/22"]["properties"]
+        self.assertEqual(p["geometry_source"], "text-route-segments")
+        self.assertEqual(p["unresolved_waypoints"], ["NOWAYP"])
+        geom = g["A1946/22"]["geometry"]
+        self.assertEqual(geom["type"], "LineString")   # 1本だけなのでGeometryCollectionにしない
+
     def test_qline_offset_flags_bad_center(self):
         self.go(self.feats())
         p = props(self.out)

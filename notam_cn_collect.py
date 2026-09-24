@@ -303,6 +303,56 @@ def parse_boundary_waypoints(e_text):
     return ring, pts, unresolved
 
 
+# 航空路(ATS route)区間の閉鎖。境界の多角形ではなく、区間ごとの線分。
+# 実例(2022年、ユーザー提供、A1945/22): "1.Y1: MAGOD - IRTOL." "2.W192: TUSLI - DUMIN."
+# 経路識別子(Y1/W192/W112等、英字1-3文字+数字1-4桁)+コロン+地名点2つ(ハイフン区切り)。
+_ROUTE_SEG = re.compile(r"\b[A-Z]{1,3}\d{1,4}:\s*([A-Z]{3,8})\s*-\s*([A-Z]{3,8})\b")
+
+# 地名点中心・km単位の円。同じ実例の4項: "SEGMENT WITHIN A CIRCLE CENTERED AT DUMIN
+# WITH RADIUS OF 30KM"。Q項の円(中心が座標・半径NM)とは別の記法。
+_NAMED_CIRCLE = re.compile(
+    r"CIRCLE\s+CENTER(?:ED)?\s+AT\s+([A-Z]{3,8})\s+WITH\s+RADIUS\s+OF\s+([\d.]+)\s*KM", re.IGNORECASE)
+
+KM_PER_NM = 1.852
+
+
+def parse_route_segments_and_circle(e_text):
+    """航空路区間の閉鎖(2点1組の線分、複数可)と、地名点中心・km単位の円を対応表
+    (notam_waypoints_cn.json)で解決する。戻り値 (segments, circle, unresolved_names)。
+      segments: [[ptA, ptB], ...]（両端が解決できた区間のみ、[lon,lat]のペア）。
+      circle: {"center": [lon,lat], "radius_nm": float}（中心が解決でき、半径が
+               CIRCLE_MAX_NM以内の場合のみ）。無ければ None。
+      unresolved_names: 対応表にも無かった地点名(順序維持・重複除去)。
+    どちらの記法も無ければ ([], None, [])。"""
+    e_text = e_text or ""
+    wp = load_waypoints()
+    segs, unresolved, seen = [], [], set()
+    for a, b in _ROUTE_SEG.findall(e_text):
+        pa, pb = wp.get(a), wp.get(b)
+        if pa and pb:
+            segs.append([pa, pb])
+        else:
+            for name in (a, b):
+                if name not in wp and name not in seen:
+                    seen.add(name)
+                    unresolved.append(name)
+    circle = None
+    m = _NAMED_CIRCLE.search(e_text)
+    if m:
+        name = m[1].upper()
+        try:
+            radius_nm = float(m[2]) / KM_PER_NM
+        except ValueError:
+            radius_nm = None
+        center = wp.get(name)
+        if center and radius_nm is not None and 0 < radius_nm <= CIRCLE_MAX_NM:
+            circle = {"center": center, "radius_nm": radius_nm}
+        elif not center and name not in seen:
+            seen.add(name)
+            unresolved.append(name)
+    return segs, circle, unresolved
+
+
 def ring_centroid(ring):
     pts = ring[:-1]
     return sum(p[1] for p in pts) / len(pts), sum(p[0] for p in pts) / len(pts)      # (lat, lon)
@@ -365,6 +415,16 @@ def build_geometry(feature, n, e_text=""):
         # 一部の地名点が対応表にも無く、多角形にできない。解決できた座標だけを目安の点として
         # 使い、どの地点名が未解決かを報告する。
         return {"type": "Point", "coordinates": wp_points[0]}, "text-point-incomplete", wp_names
+    segs, circle, seg_unresolved = parse_route_segments_and_circle(e_text)
+    if segs or circle:
+        # 航空路区間の閉鎖(線分)・地名点中心の円(km単位)。エリアの多角形とは別物なので、
+        # 複数図形を1つのFeatureにまとめる GeometryCollection にする。
+        geoms = [{"type": "LineString", "coordinates": s} for s in segs]
+        if circle:
+            geoms.append({"type": "Polygon",
+                          "coordinates": [circle_ring(circle["center"][1], circle["center"][0], circle["radius_nm"])]})
+        geom = geoms[0] if len(geoms) == 1 else {"type": "GeometryCollection", "geometries": geoms}
+        return geom, "text-route-segments", (seg_unresolved or None)
     c = parse_qline_coord(n.get("coordinates"))
     try:
         r = float(n.get("radius")) if n.get("radius") not in (None, "") else None
@@ -376,7 +436,8 @@ def build_geometry(feature, n, e_text=""):
         return {"type": "Point", "coordinates": [round(c[1], 6), round(c[0], 6)]}, "qline-point", None
     if points:
         return {"type": "Point", "coordinates": points[0]}, "api-point", None
-    return None, None, (wp_names or None)
+    all_unresolved = wp_names + [n for n in seg_unresolved if n not in wp_names]
+    return None, None, (all_unresolved or None)
 
 
 # ----------------------------------------------------------------------------- レコード
