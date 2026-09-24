@@ -150,6 +150,17 @@ class Fixture(unittest.TestCase):
         self.assertIsNone(C.parse_qline_coord("garbage"))
         self.assertIsNone(C.parse_qline_coord("9900N11600E"))
 
+    def test_boundary_waypoint_name_longer_than_cap_is_not_truncated(self):
+        # 地名点候補は3-8文字(_CHAIN_NAME)を想定しているが、それより長い連続英字が隣接すると、
+        # 語境界を付けずに検索すると先頭が欠けた形で誤って部分一致してしまうバグがあった
+        # (例: 9文字の"NOSUCHFIX"の先頭1文字が消えて"OSUCHFIX"にマッチしていた)。
+        # \b境界を付けたことで、8文字を超える連続英字はどの位置からもマッチせず、
+        # チェーン自体が見つからない(=誤って部分一致した座標を使わない)ことを確認する。
+        ring, pts, unresolved = C.parse_boundary_waypoints("RUSDI-NOSUCHFIXXX-N364427E0874615-RUSDI.")
+        self.assertIsNone(ring)
+        self.assertEqual(pts, [])
+        self.assertEqual(unresolved, [])
+
     # --- 冪等性・更新
     def test_idempotent(self):
         self.put(BASE)
@@ -376,10 +387,10 @@ class RealNotams(unittest.TestCase):
         self.assertAlmostEqual(ring[0][0], 116 + 28 / 60 + 12 / 3600, places=5)
         self.assertEqual(ring[0], ring[-1])
 
-    def test_boundary_with_unresolved_waypoints(self):
+    def test_boundary_with_waypoints_resolved_via_table(self):
         # 実例(2022年、ユーザー提供): 境界の4点中2点が座標ではなく地名有意点(waypoint)の名前
-        # (RUSDI/SADAN)。Q項にも座標・半径が無い(空欄)ため、修正前は no_geometry で
-        # 地図から完全に漏れていた。
+        # (RUSDI/SADAN)。notam_waypoints_cn.json (opennav.com由来、ユーザー提供)に両方とも
+        # 登録されているため、多角形として解決できる。
         raw = ("A1921/22 NOTAMN Q) ZWUQ/QRTCA/IV/BO/W/000/999/ A) ZWUQ B) 2207190100 C) 2207190300 "
                "E) ACFT ARE FORBIDDEN ENTER FLW AREA: RUSDI-SADAN-N364427E0874615-RUSDI. F) GND G) UNL")
         feat = real_feat(raw, "ZWUQ", "ZWUQ", None, None, "1921")
@@ -387,13 +398,31 @@ class RealNotams(unittest.TestCase):
         g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
         self.assertIn("A1921/22", g)
         p = g["A1921/22"]["properties"]
-        self.assertEqual(p["geometry_source"], "text-point-incomplete")
-        self.assertEqual(p["unresolved_waypoints"], ["RUSDI", "SADAN"])
-        self.assertEqual(g["A1921/22"]["geometry"]["type"], "Point")
+        self.assertEqual(p["geometry_source"], "text-polygon-waypoint")
+        self.assertEqual(p["unresolved_waypoints"], [])
+        ring = g["A1921/22"]["geometry"]["coordinates"][0]
+        self.assertEqual(len(ring), 4)                 # RUSDI, SADAN, N364427E0874615, RUSDI(閉じる)
+        self.assertEqual(ring[0], ring[-1])
+        wp = C.load_waypoints()
+        self.assertEqual(ring[0], wp["RUSDI"])
+        self.assertEqual(ring[1], wp["SADAN"])
         # N364427E0874615 = 36°44'27"N 87°46'15"E
-        lon, lat = g["A1921/22"]["geometry"]["coordinates"]
-        self.assertAlmostEqual(lat, 36 + 44 / 60 + 27 / 3600, places=5)
-        self.assertAlmostEqual(lon, 87 + 46 / 60 + 15 / 3600, places=5)
+        self.assertAlmostEqual(ring[2][1], 36 + 44 / 60 + 27 / 3600, places=5)
+        self.assertAlmostEqual(ring[2][0], 87 + 46 / 60 + 15 / 3600, places=5)
+
+    def test_boundary_with_unresolved_waypoint_name(self):
+        # 対応表に無い地名点が混じる場合は、多角形にはせず(不正確な形を描かない)、
+        # 解決できた座標だけを目安の点として出し、未解決の名前を報告する。
+        raw = ("A9999/22 NOTAMN Q) ZWUQ/QRTCA/IV/BO/W/000/999/ A) ZWUQ B) 2207190100 C) 2207190300 "
+               "E) ACFT ARE FORBIDDEN ENTER FLW AREA: RUSDI-NOWAYP-N364427E0874615-RUSDI. F) GND G) UNL")
+        feat = real_feat(raw, "ZWUQ", "ZWUQ", None, None, "9999")
+        self.assertEqual(self.go([feat]), 0)
+        g = {f["properties"]["number"]: f for f in load(self.out)["features"]}
+        self.assertIn("A9999/22", g)
+        p = g["A9999/22"]["properties"]
+        self.assertEqual(p["geometry_source"], "text-point-incomplete")
+        self.assertEqual(p["unresolved_waypoints"], ["NOWAYP"])
+        self.assertEqual(g["A9999/22"]["geometry"]["type"], "Point")
 
     def test_qline_offset_flags_bad_center(self):
         self.go(self.feats())
